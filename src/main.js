@@ -1516,7 +1516,7 @@ async function saveRack(list,opt){
   const act=rackEntry(activeId); if(act){ act.zq=null; act.wq=null; }   // 使用中的資料仍在音訊執行緒
   const head=new TextEncoder().encode(JSON.stringify({magic:'WAXRACK',v:3,codec:'lpc2-rice',step,quality:q,N,active:Math.max(0,list.findIndex(e=>e.id===activeId)),cyls,groupOv:opt.speed?groupOv:{},groupMeta:Object.fromEntries([...new Set(list.map(e=>e.group))].filter(g=>groupMeta[g]&&groupMeta[g].name).map(g=>[g,{name:groupMeta[g].name}])),...(opt.dist?{seed:P.seed,scratchCount:P.scratchCount,defects:Object.fromEntries(DIST_KEYS.map(k=>[k,P[k]]))}:{}),waxColor:U.waxColor}));
   const blob=new Blob([new Uint32Array([head.length]),head,...blobs]);
-  download(blob,`${saveBaseName(list)}.waxrack`);
+  if(!await download(blob,`${saveBaseName(list)}.waxrack`)){ toast('已取消儲存'); return; }
   toast(`已儲存 ${list.length} 支蠟筒（${(blob.size/1048576).toFixed(2)} MB，${{lossless:'無損',high:'高品質',compact:'精簡'}[q]}${raw?`，為未壓縮的 ${(blob.size/raw*100).toFixed(0)}%`:''}）`);
 }
 async function loadAny(file){
@@ -1726,7 +1726,7 @@ async function exportAll(sel,opt){
     toast(`離線渲染第 ${k+1}/${list.length} 支…`); parts.push(await renderRange(z,w,e.T,startS,endS,rpmFor(e),sr,k===list.length-1,opt.dist?null:DIST_OFF)); }
   const total=parts.reduce((a,b)=>a+b.length,0), out=new AudioBuffer({numberOfChannels:2,length:total,sampleRate:sr});
   for(let c=0;c<2;c++){ const d=out.getChannelData(c); let o=0; for(const b of parts){ d.set(b.getChannelData(c),o); o+=b.length; } }
-  download(encodeWav(out),`${saveBaseName(list)}.wav`); toast(`已匯出 ${list.length} 支蠟筒（${(total/sr).toFixed(1)} 秒）`);
+  if(!await download(encodeWav(out),`${saveBaseName(list)}.wav`)){ toast('已取消匯出'); return; } toast(`已匯出 ${list.length} 支蠟筒（${(total/sr).toFixed(1)} 秒）`);
   const act=rackEntry(activeId); if(act){ act.zq=null; act.wq=null; }
 }
 
@@ -1810,9 +1810,21 @@ addEventListener('keydown',e=>{ if(askExport.done){ if(e.key==='Escape') askExpo
   else if(e.key==='t'||e.key==='T'){ $('bTour').click(); } else if(e.key==='Escape'){ if(carousel) stopCarousel(); else doStop(); } });
 
 $('bStart').onclick=async()=>{
-  try{ await initAudio(); $('splash').classList.add('hide'); setTimeout(()=>$('splash').remove(),700); }
+  try{ await initAudio(); $('splash').classList.add('hide'); setTimeout(()=>$('splash').remove(),700); openExternal(); }
   catch(err){ $('splashMsg').textContent='音訊初始化失敗：'+err.message; }
 };
+// ---- 桌面版：雙擊 .waxrack／音檔交給本程式時開啟；留聲機還沒開啟就先排隊 ----
+const externalFiles=[];
+function openExternal(f){
+  if(f) externalFiles.push(new File([f.data],f.name));
+  if(!node){ if(f) toast(`已收到「${f.name}」，開啟留聲機後載入`); return; }
+  for(const file of externalFiles.splice(0)){
+    if(/\.(waxrack|waxcyl)$/i.test(file.name)) loadAny(file).catch(err=>toast('載入失敗：'+err.message));
+    else importAudio(file);
+  }
+}
+platform.onOpenFile?.(openExternal);
+platform.onCommand?.(c=>{ if(c==='toggle-play') $('bPlay').click(); else if(c==='stop') $('bStop').click(); });
 
 // 點擊蠟筒移動唱頭
 const ray=new THREE.Raycaster(), pDown=new THREE.Vector2();

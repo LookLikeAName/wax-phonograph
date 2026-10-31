@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release/
 .wrangler/
 *.log
 # 舊的離線版產物（改由 npm run build 產生 dist/index.html）
