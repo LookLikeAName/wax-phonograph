@@ -239,6 +239,14 @@ body.player #transport,body.player #panel,body.player #recDock,body.player #mag,
 .pv-sp{flex:1}
 .pv-head .btn{flex:none}
 .pv-opt{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer}
+.pv-body{flex:1;min-height:0;display:flex;position:relative}
+.pv-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.pv-side{display:none;width:320px;flex:none;overflow-y:auto;border-left:1px solid var(--line);background:var(--panel);padding:4px 16px 16px;scrollbar-width:thin;scrollbar-color:#5a4a33 transparent}
+#player.side .pv-side{display:block}
+.pv-sideh{color:var(--gold);font-size:12px;letter-spacing:.15em;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.pv-side .volbox{margin:8px 0}
+.pv-side .volbox input{flex:1;width:auto}
+.pv-head .btn.on{border-color:var(--gold2);color:var(--gold2)}
 .pv-page{display:none;flex:1;min-height:0;overflow:auto;padding:22px 28px}
 .pv-page.on{display:flex;flex-direction:column}
 .pv-now{display:flex;gap:28px;align-items:center;max-width:980px;width:100%;margin:0 auto 18px}
@@ -292,7 +300,9 @@ body.player #transport,body.player #panel,body.player #recDock,body.player #mag,
 .pv-st.st-busy{color:var(--gold2);border-color:var(--gold)}
 .pv-st.st-stale,.pv-st.st-changed{color:#e8b45a;border-color:#7a5a2a}
 .pv-st.st-error{color:#ff8a70;border-color:#7a3a2a}
-@media (max-width:860px){ .pv-now{flex-direction:column;align-items:stretch} .pv-cover{width:100%;max-width:260px;margin:0 auto} .pv-head{flex-wrap:wrap} .pv-opt{display:none} }
+@media (max-width:860px){ .pv-now{flex-direction:column;align-items:stretch} .pv-cover{width:100%;max-width:260px;margin:0 auto} .pv-head{flex-wrap:wrap} .pv-opt{display:none}
+  .pv-side{position:absolute;left:0;right:0;bottom:0;width:auto;height:50%;border-left:none;border-top:1px solid var(--line);z-index:1} }
+@media (min-width:861px) and (max-height:860px){ .pv-side{width:290px} .pv-side .row .hint{display:none} }
 #tourCap{position:fixed;left:32px;bottom:36px;max-width:min(420px,calc(100vw - 64px));padding:14px 18px 15px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:10px;backdrop-filter:blur(8px);z-index:5;opacity:0;transform:translateY(10px);transition:opacity .9s,transform .9s;pointer-events:none;display:none}
 body.carousel #tourCap{display:block}
 #tourCap.on{opacity:1;transform:none}

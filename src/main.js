@@ -29,6 +29,10 @@ const PRESETS={high:{room:true,shadows:true,sunShadow:true,rays:true,particles:t
   off:{}};
 const PERF_KEYS=['xSpeed','xDist','saveQ','wheelDeg','masterVol','muted','quality','room','shadows','sunShadow','rays','particles','res','fpsCap'];
 try{ const sv=JSON.parse(localStorage.getItem('phonograph.perf')||'null'); if(sv){ if(PRESETS[sv.quality]) Object.assign(U,PRESETS[sv.quality]); for(const k of PERF_KEYS) if(k in sv) U[k]=sv[k]; } }catch(e){}
+// 錄音與播放設定：使用者自己調過的值記在這台電腦上，下次開啟時沿用（裝上蠟筒時自動套用的值不算，見 rememberSetting）
+const SETTINGS_KEY='phonograph.settings';
+let userSet={}; try{ userSet=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'{}')||{}; }catch(e){}
+for(const [k,v] of Object.entries(userSet)){ const o=k in DEF_P?P:k in DEF_U?U:null; if(o&&typeof v===typeof o[k]&&!Array.isArray(o[k])) o[k]=v; }
 // WebGL 不可用時（無 GPU、驅動被封鎖）整個 3D 關閉，聲音與剖面照常；先探測，建立 renderer 失敗時再改為 false
 let has3D=(()=>{ try{ const c=document.createElement('canvas'), g=c.getContext('webgl2')||c.getContext('webgl'); if(!g) return false; const x=g.getExtension('WEBGL_lose_context'); if(x) x.loseContext(); return true; }catch(e){ return false; } })();
 if(!has3D) U.quality='off';
@@ -278,11 +282,15 @@ const SPEC=[
  ]},
 ];
 
+// 要記住的設定：錄音、錄放設定、磨損三區的所有項目，加上蠟筒架的播放開關
+const SETTING_KEYS=new Set([...SPEC.filter(s=>/^(錄音|錄放設定|磨損) /.test(s.title)).flatMap(s=>s.items.flatMap(it=>[it.k,it.tog])).filter(Boolean),'chainRec','chainPlay','applyRec','autoLift']);
+function rememberSetting(k){ userSet[k]=(k in P?P:U)[k]; try{ localStorage.setItem(SETTINGS_KEY,JSON.stringify(userSet)); }catch(e){} }
 function fmt(v,step){ const d=step<0.01?3:step<0.1?2:step<1?1:0; return Number(v).toFixed(d); }
 function placeRec(){
   const dock=$('recDock'); if(!dock) return;
   const rows=[...document.querySelectorAll('[data-dock]')], wide=innerWidth>860, TGT={a:'dockA',b:'dockB',c:'dockC',L:'rackL',r:'rackR',f:'rackF'};
-  for(const r of rows){ const t=wide?$(TGT[r.dataset.dock]):r._home; if(t&&r.parentNode!==t) t.appendChild(r); }
+  for(const r of rows){ if(r.closest('.pv-side')) continue;   // 正借給播放器側邊欄（movePlaySettings）
+    const t=wide?$(TGT[r.dataset.dock]):r._home; if(t&&r.parentNode!==t) t.appendChild(r); }
   document.querySelectorAll('details[data-docked]').forEach(d=>d.style.display=wide?'none':'');
   dock.classList.toggle('on',wide);
   const compact=wide&&innerHeight<=860, mag=$('mag'); document.body.classList.toggle('compact',compact);
@@ -373,6 +381,7 @@ function setRange(k,v){ const r=document.querySelector(`input[type=range][data-k
 
 function onChange(k){
   if(WK.has(k)) sendParams([k]);
+  if(SETTING_KEYS.has(k)&&!applyingRec) rememberSetting(k);   // 裝上蠟筒、換蠟材時自動套用的值不記
   if(OV_KEYS.has(k)&&!applyingRec&&U.applyRec){ const e=rackEntry(activeId); if(e){ (groupOv[e.group]||(groupOv[e.group]={}))[k]=P[k]; if(k==='rpm') renderRack(); } }
   switch(k){
     case 'src': case 'drive': case 'rDrive': updateWhen(); break;
@@ -1913,7 +1922,24 @@ function musicStatus(){ const ae=rackEntry(activeId), playing=mode==='play'; if(
   return {gid:ae.group,name:groupName(ae.group),pos:before+Math.min(dispS/N/((recRpm(ae)||P.rpm)/60),cylSecs(ae)),total:mem.reduce((a,e)=>a+cylSecs(e),0),playing}; }
 const music=initMusic({ platform, toast, fmtDur, hasAudio:()=>!!node, decodeAudio, convertSong, loadSong, playGroup, removeGroup, rackSongs, musicStatus,
   stop:doStop, togglePlay:()=>$('bPlay').click(), groupName,
-  setPlayerMode:on=>{ playerMode=on; document.body.classList.toggle('player',on); if(!on) frameView(); } });
+  setPlayerMode:(on,side)=>{ playerMode=on; document.body.classList.toggle('player',on); movePlaySettings(on?side:null); if(!on) frameView(); } });
+// 播放器的側邊欄：把面板上的音量、播放設定、磨損與「裝上時套用…」整列搬過去（同一組元件，所以值與變數一定一致），
+// 關掉播放器時放回原位。原位留一個註解節點當記號。
+let sideMoved=[];
+function movePlaySettings(side){
+  if(side&&sideMoved.length) return;
+  if(!side){ if(!sideMoved.length) return; const box=sideMoved[0][0].closest('.pv-side');
+    for(const [el,mark] of sideMoved) mark.replaceWith(el); sideMoved=[]; if(box) box.innerHTML=''; placeRec(); updateWhen(); return; }
+  const take=(title,els)=>{ els=els.filter(Boolean); if(!els.length) return; const h=document.createElement('div'); h.className='pv-sideh'; h.textContent=title; side.appendChild(h);
+    for(const el of els){ const mark=document.createComment('pv'); el.replaceWith(mark); side.appendChild(el); sideMoved.push([el,mark]); } };
+  const rows=det=>det?[...det.children].filter(r=>r.classList.contains('row')&&!r.classList.contains('resetRow')&&r.dataset.m!=='rec'):[];
+  const sec=t=>[...document.querySelectorAll('#panel>details')].find(d=>d.querySelector('summary').textContent.startsWith(t));
+  take('音量',[document.querySelector('.volbox')]);
+  take('播放設定',rows(sec('錄放設定')));
+  take('磨損',rows(sec('磨損')));
+  take('蠟筒架',[document.querySelector('input[data-ck="applyRec"]')?.closest('.row')]);
+  updateWhen();
+}
 platform.onCommand?.(c=>{ if(c==='toggle-play') $('bPlay').click(); else if(c==='stop') $('bStop').click(); });
 
 // 點擊蠟筒移動唱頭

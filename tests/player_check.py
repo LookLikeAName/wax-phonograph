@@ -14,10 +14,10 @@ def check(label, ok, extra=''):
     print(('ok   ' if ok else 'FAIL ') + label + (f' — {extra}' if extra else ''))
     failed |= not ok
 with sync_playwright() as p:
-    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
     pg = b.new_page(viewport={'width': 1280, 'height': 800})
     errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
-    pg.add_init_script("localStorage.setItem('phonograph.perf',JSON.stringify({quality:'off'}))")
+    pg.add_init_script("if(!localStorage.getItem('phonograph.perf')) localStorage.setItem('phonograph.perf',JSON.stringify({quality:'off'}))")   # 只在第一次設，重新整理時才看得到存下來的音量
     pg.route('**/css2**', lambda r: r.fulfill(body='', content_type='text/css'))
     pg.goto(DIST.as_uri(), wait_until='domcontentloaded'); time.sleep(3)
     J = pg.evaluate
@@ -32,6 +32,10 @@ with sync_playwright() as p:
     J("document.getElementById('bPlayer').click()"); time.sleep(0.5)
     check('開啟播放器', J("document.body.classList.contains('player') && document.getElementById('player').classList.contains('on')"))
     check('3D 介面隱藏', J("getComputedStyle(document.getElementById('transport')).display==='none'"))
+    side = J("""(()=>{ const s=document.getElementById('pvSide'); return {vis:getComputedStyle(s).display!=='none', vol:!!s.querySelector('.volbox #vol'),
+      rpm:!!s.querySelector('input[data-k=rpm]'), apply:!!s.querySelector('input[data-ck=applyRec]'), wear:!!s.querySelector('input[data-k=wearRate]'),
+      rec:s.querySelectorAll('[data-m=rec], input[data-k=rRpm]').length}; })()""")
+    check('側邊欄有音量、播放設定、磨損與「裝上時套用」，沒有錄音設定', side['vis'] and side['vol'] and side['rpm'] and side['apply'] and side['wear'] and side['rec'] == 0, str(side))
     J("document.querySelector('.pv-tabs [data-pv=lib]').click()"); time.sleep(0.3)
     n = J("document.querySelectorAll('#pvLibWeb tbody tr[data-k]').length")
     check('曲庫列出蠟筒架上的歌', n == 2, f'{n} 首')
@@ -46,8 +50,21 @@ with sync_playwright() as p:
         if t2 != t1: break
     check('第一首播完自動接到第二首', t2 == 'tone (2)', t2)
     check('目前播放的那首有標示', J("document.querySelector('#pvQueue li.on')?.dataset.i") == '1')
+    # 在側邊欄改設定：關掉「裝上時套用」、調振膜增益與音量（和面板是同一組元件）
+    J("""(()=>{ const s=document.getElementById('pvSide'), c=s.querySelector('input[data-ck=applyRec]'); c.checked=false; c.dispatchEvent(new Event('change'));
+      const r=s.querySelector('input[type=range][data-k=volume]'); r.value=1.3; r.dispatchEvent(new Event('input'));
+      const v=s.querySelector('#vol'); v.value=40; v.dispatchEvent(new Event('input')); })()""")
     pg.keyboard.press('p'); time.sleep(0.4)
     check('按 P 回到留聲機', not J("document.body.classList.contains('player')"))
+    back = J("""({vol:!!document.querySelector('#transport .volbox'), apply:!!document.querySelector('#panel input[data-ck=applyRec], #recDock input[data-ck=applyRec]'),
+      rpm:!!document.querySelector('#panel input[data-k=rpm]'), empty:!document.getElementById('pvSide').children.length,
+      applyOff:!document.querySelector('input[data-ck=applyRec]').checked})""")
+    check('關掉播放器後設定放回面板，值保持一致', all(back.values()), str(back))
     check('沒有頁面錯誤', not errs, '; '.join(errs[:3]))
+    # 重新開啟：剛才改的設定要還在
+    pg.reload(wait_until='domcontentloaded'); time.sleep(3)
+    kept = J("""({apply:document.querySelector('input[data-ck=applyRec]').checked, volume:+document.querySelector('input[type=range][data-k=volume]').value,
+      master:+document.getElementById('vol').value})""")
+    check('重新開啟後保留播放設定與音量', kept == {'apply': False, 'volume': 1.3, 'master': 40}, str(kept))
     b.close()
 print('FAIL' if failed else 'PASS'); sys.exit(1 if failed else 0)

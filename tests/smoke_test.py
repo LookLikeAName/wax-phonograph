@@ -12,7 +12,7 @@ if not DIST.exists(): sys.exit('找不到 dist/index.html，請先執行 npm run
 def log(*a): print(*a, flush=True)
 errors = []
 with sync_playwright() as p:
-    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
     pg = b.new_page(viewport={'width': 1440, 'height': 900}, accept_downloads=True)
     pg.on('pageerror', lambda e: (errors.append(str(e)), log('PAGEERROR', e)))
     pg.on('dialog', lambda d: d.accept())

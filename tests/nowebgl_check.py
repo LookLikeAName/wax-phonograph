@@ -16,7 +16,7 @@ def check(name, cond):
 NOGL = """(()=>{const o=HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext=function(t,...a){ if(/webgl/i.test(t)) return null; return o.call(this,t,...a); };})();"""
 with sync_playwright() as p:
-    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--disable-gpu', '--disable-software-rasterizer'])
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--disable-gpu', '--disable-software-rasterizer'])
     pg = b.new_page(viewport={'width': 1440, 'height': 900})
     pg.on('pageerror', lambda e: errors.append(str(e)))
     pg.on('console', lambda m: m.type == 'error' and errors.append(m.text))

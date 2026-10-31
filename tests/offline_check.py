@@ -8,7 +8,7 @@ page_path = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'dist/ind
 if not page_path.exists(): sys.exit(f'找不到 {page_path}，請先執行 npm run build')
 errors, external = [], []
 with sync_playwright() as p:
-    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
     pg = b.new_page(viewport={'width': 1440, 'height': 900})
     pg.on('pageerror', lambda e: errors.append(str(e)))
     pg.on('console', lambda m: m.type == 'error' and errors.append(m.text))

@@ -26,7 +26,7 @@ function wav(file, freq, secs = 3, sr = 22050) {
 wav(path.join(music, '01 第一首.wav'), 330);
 wav(path.join(music, 'Disc 2', '02 第二首.wav'), 440);
 
-const FLAGS = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--user-data-dir=${userData}`];
+const FLAGS = ['--no-sandbox', '--mute-audio', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--user-data-dir=${userData}`];
 async function launch(pick) {
   const env = { ...process.env, PHONO_TEST_PICK: JSON.stringify(pick) };
   const app = await electron.launch({ executablePath: electronBin, args: [root, ...FLAGS], env, cwd: root });

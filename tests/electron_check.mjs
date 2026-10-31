@@ -15,7 +15,7 @@ const electronBin = path.join(root, 'node_modules', '.bin', 'electron');
 const saveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phono-save-'));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'phono-user-'));   // 每次用乾淨的設定，不影響本機
 // 無頭環境沒有 GPU：用 SwiftShader 軟體 WebGL（不能用 --disable-gpu，那會讓 WebGL 建不起來、整個程式停在開場畫面）
-const FLAGS = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--user-data-dir=${userData}`];
+const FLAGS = ['--no-sandbox', '--mute-audio', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--user-data-dir=${userData}`];
 const env = { ...process.env, PHONO_TEST_SAVE_DIR: saveDir };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = false;

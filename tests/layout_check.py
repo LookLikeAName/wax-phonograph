@@ -20,7 +20,7 @@ OVERLAP_JS = """() => {
   return bad; }"""
 fail = False
 with sync_playwright() as p:
-    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'])
     for (w, h) in SIZES:
         pg = b.new_page(viewport={'width': w, 'height': h})
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))

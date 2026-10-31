@@ -12,7 +12,7 @@ export function initMusic(api) {
   const fs = api.platform.fs;   // 只有桌面版有
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  let prefs = { startPlayer: false, shuffle: false, repeat: 'off', lastWorkspace: null };
+  let prefs = { startPlayer: false, shuffle: false, repeat: 'off', lastWorkspace: null, side: true };
   try { Object.assign(prefs, JSON.parse(localStorage.getItem(AUDIO_KEY) || '{}')); } catch {}
   const savePrefs = () => { try { localStorage.setItem(AUDIO_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -42,8 +42,11 @@ export function initMusic(api) {
     <span class="pv-tabs"><button data-pv="now" class="on">播放</button><button data-pv="lib">曲庫</button></span>
     <span class="pv-sp"></span>
     <label class="pv-opt"><input type="checkbox" id="pvStart"> 啟動時開啟播放器</label>
+    <button class="btn" id="pvSideBtn" title="顯示／隱藏播放設定">⚙ 播放設定</button>
     <button class="btn" id="pvClose">回到留聲機</button>
   </header>
+  <div class="pv-body">
+  <div class="pv-main">
   <section class="pv-page on" data-page="now">
     <div class="pv-now">
       <div class="pv-cover" id="pvCover"></div>
@@ -67,7 +70,10 @@ export function initMusic(api) {
   <section class="pv-page" data-page="lib">
     <div id="pvLibDesk" class="pv-lib"></div>
     <div id="pvLibWeb" class="pv-lib"></div>
-  </section>`;
+  </section>
+  </div>
+  <aside class="pv-side" id="pvSide"></aside>
+  </div>`;
   document.body.appendChild(root);
 
   root.querySelectorAll('.pv-tabs button').forEach(b => b.onclick = () => showPage(b.dataset.pv));
@@ -79,9 +85,13 @@ export function initMusic(api) {
   $('pvStart').checked = !!prefs.startPlayer;
   $('pvStart').onchange = e => { prefs.startPlayer = e.target.checked; savePrefs(); };
   $('pvClose').onclick = () => close();
+  // 側邊欄的內容是主程式面板上的播放設定（setPlayerMode 開啟時搬進來、關閉時放回去）
+  const syncSide = () => { root.classList.toggle('side', !!prefs.side); $('pvSideBtn').classList.toggle('on', !!prefs.side); };
+  $('pvSideBtn').onclick = () => { prefs.side = !prefs.side; savePrefs(); syncSide(); };
+  syncSide();
 
   // ---------------- 開關 ----------------
-  function open(page) { api.setPlayerMode(true); root.classList.add('on'); if (page) showPage(page); refreshSongs(); renderQueue(); tick(); }
+  function open(page) { api.setPlayerMode(true, $('pvSide')); root.classList.add('on'); if (page) showPage(page); refreshSongs(); renderQueue(); tick(); }
   function close() { root.classList.remove('on'); api.setPlayerMode(false); }
   function ready() {   // 留聲機開啟後（音訊可用）
     if (fs && prefs.lastWorkspace) openWorkspace(prefs.lastWorkspace, true);
