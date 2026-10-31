@@ -1,0 +1,52 @@
+# 推送 v* 標籤時，在 Windows 上建置免安裝版（zip 與 portable exe），並建立 GitHub Release
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 檢查標籤與 package.json 版本一致
+        shell: bash
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "標籤 $GITHUB_REF_NAME 與 package.json 版本 $v 不一致"; exit 1; }
+
+      - run: npm ci
+
+      - name: 建置 Windows 版
+        run: npm run dist:win -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: 建立 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          cat > notes.md <<EOF
+          ## 下載（Windows x64，免安裝）
+
+          - **WaxPhonograph-$v-win-x64.zip**：解壓縮後執行 \`WaxPhonograph.exe\`，啟動較快。
+          - **WaxPhonograph-$v-portable.exe**：單一執行檔，每次啟動會先解壓到暫存資料夾。
+
+          執行檔沒有程式碼簽章，第一次開啟時 Windows SmartScreen 可能會警告，按「其他資訊 → 仍要執行」即可。
+
+          不想下載的話，也可以直接使用線上版：https://wax-phonograph.pages.dev
+          EOF
+          gh release create "$GITHUB_REF_NAME" release/*-win-x64.zip release/*-portable.exe \
+            --title "蠟筒留聲機 $GITHUB_REF_NAME" --notes-file notes.md

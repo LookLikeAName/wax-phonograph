@@ -63,6 +63,8 @@ npm run dist:win   # 打包 Windows 版到 release/
 - 系統匣選單：顯示視窗、播放／停止、停止、結束。關閉視窗只會縮到系統匣，播放不中斷。
 - 記住視窗大小與上次存檔的資料夾。
 
+發布新版本：把 `package.json` 的 `version` 改好並推送對應的標籤（例如 `v0.2.0`），GitHub Actions 會在 Windows 上建置這兩個檔案並建立 Release（`.github/workflows/release.yml`）。
+
 主程序支援兩個環境變數：`PHONO_DEV_URL`（改載入 Vite dev server）與 `PHONO_TEST_SAVE_DIR`（測試用，跳過存檔對話框，直接寫入這個資料夾）。
 
 ### 部署
