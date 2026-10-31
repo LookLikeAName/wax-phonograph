@@ -2,6 +2,9 @@
 import './style.css';
 import workletSrc from './worklet/phono.js?raw';
 import { platform } from './platform/index.js';
+// 對外連結；下載連結一律指向最新版的 Release 頁
+const REPO_URL='https://github.com/LookLikeAName/wax-phonograph', RELEASES_URL=REPO_URL+'/releases/latest', WEB_URL='https://wax-phonograph.pages.dev';
+document.body.classList.toggle('desktop',platform.name==='electron');   // 桌面版隱藏下載連結（.webOnly）、改顯示線上版連結（.deskOnly）
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -261,6 +264,12 @@ const SPEC=[
   {t:'select',k:'magTab',u:1,label:'放大剖面內容',opts:[['both','全部同時顯示'],['groove','只看溝槽剖面'],['repro','只看唱頭剖面']]},
   {t:'btns',b:[['bClose','特寫唱針'],['bOverview','全景']]},
  ]},
+ {title:'關於 · About',items:[
+  {t:'html',html:`<div class="about"><b>蠟筒留聲機</b> v${__APP_VERSION__}<br>
+    <span class="webOnly"><a class="relLink" target="_blank" rel="noopener">⬇ 下載 Windows 桌面版（免安裝）</a><br></span>
+    <span class="deskOnly"><a href="${WEB_URL}" target="_blank" rel="noopener">線上版</a><br></span>
+    <a href="${REPO_URL}" target="_blank" rel="noopener">原始碼（GitHub）</a></div>`},
+ ]},
 ];
 
 function fmt(v,step){ const d=step<0.01?3:step<0.1?2:step<1?1:0; return Number(v).toFixed(d); }
@@ -334,6 +343,7 @@ function buildPanel(){
     panel.appendChild(det);
   }
   updateWhen(); placeRec();
+  document.querySelectorAll('a.relLink').forEach(a=>a.href=RELEASES_URL);   // 開場、說明、關於裡的下載連結
 }
 function updateWhen(){ document.querySelectorAll('[data-when]').forEach(el=>{ const [ks,v]=el.dataset.when.split(':');   // k 可用 | 列出多個，任一個符合就顯示
     const ok=ks.split('|').some(k=>{ const cur=U[k]??P[k]; return v.startsWith('!')?cur!==v.slice(1):cur===v; }); el.style.display=ok?'':'none'; });

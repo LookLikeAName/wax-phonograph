@@ -1,6 +1,6 @@
 // Electron 主程序：視窗、存檔對話框、開啟 .waxrack／音檔、系統匣、單一執行個體
 // 畫面就是建置好的單一檔案 dist/index.html；網頁版與桌面版共用同一份程式，差異只在 src/platform/。
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -52,6 +52,10 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
   if (DEV_URL) win.loadURL(DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
   win.webContents.on('did-start-loading', () => { rendererReady = false; });
+  // 頁面裡的外部連結（下載頁、GitHub）交給系統瀏覽器開，不在程式裡開新視窗；視窗本身也不允許被導到別的網址
+  const external = url => { if (/^https?:\/\//i.test(url)) shell.openExternal(url); };
+  win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (url !== win.webContents.getURL()) { e.preventDefault(); external(url); } });
   win.on('close', e => {
     state.bounds = win.getNormalBounds(); state.maximized = win.isMaximized(); saveState();
     if (!quitting && tray) {   // 關閉視窗只是縮到系統匣，音樂繼續播

@@ -210,6 +210,15 @@ details[data-pm=rec] .row[data-m=play],details[data-pm=play] .row[data-m=rec]{di
 .card p,.card li{font-size:14px;line-height:1.75;color:#e2d7c1}
 .card .small{font-size:12px;color:var(--muted)}
 .card .orn{color:var(--gold);text-align:center;letter-spacing:.6em;margin:14px 0}
+.card a,.about a{color:var(--gold2);text-decoration:none;border-bottom:1px solid rgba(236,213,156,.35)}
+.card a:hover,.about a:hover{border-bottom-color:var(--gold2)}
+.card a.dlBtn{display:inline-block;border:1px solid #6b5631;padding:8px 22px;font-size:14px;letter-spacing:.1em}
+.dlLine{margin:10px 0 0}
+.about{font-size:12.5px;line-height:1.9;color:var(--muted)}
+.about b{color:var(--gold2);font-weight:600}
+/* 網頁版才顯示下載連結；桌面版才顯示線上版連結 */
+body.desktop .webOnly{display:none!important}
+body:not(.desktop) .deskOnly{display:none!important}
 #splash{position:fixed;inset:0;display:grid;place-items:center;z-index:40;background:rgba(8,6,5,.62);backdrop-filter:blur(3px);transition:opacity .6s}
 #splash.hide{opacity:0;pointer-events:none}
 /* 桌面：上方按鈕列置中在設定面板左邊的空間；標題會撞到按鈕列時隱藏 */

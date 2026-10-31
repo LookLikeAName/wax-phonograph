@@ -45,6 +45,9 @@ try {
   let { app, page } = await launch();
   check('桌面版橋接存在', await page.evaluate(() => typeof window.phonoDesktop?.saveFile === 'function'));
   check('畫面中碰不到 Node', await page.evaluate(() => typeof require === 'undefined' && typeof process === 'undefined'));
+  check('桌面版隱藏下載連結', await page.evaluate(() => document.body.classList.contains('desktop') && [...document.querySelectorAll('.webOnly')].every(e => getComputedStyle(e).display === 'none')));
+  await page.evaluate(() => window.open('about:blank')); await sleep(500);   // 外部連結交給系統瀏覽器，程式裡不會多開視窗
+  check('連結不會在程式裡開新視窗', await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length) === 1);
   await start(page);
   await page.setInputFiles('#fileIn', audio); await sleep(2000);
   await page.evaluate(() => document.getElementById('fBurn').click());
