@@ -99,6 +99,68 @@ try {
     check('第二次開啟的檔案加進同一個視窗', n2 > n1, `${n1} → ${n2} 支`);
     await app.evaluate(({ app }) => { app.quit(); }).catch(() => {}); await app.close().catch(() => {});
   }
+
+  // 6. 檔案系統橋接（不測 pick* 對話框，只確認有接上）：掃描、讀寫、輸出路徑、標籤
+  {
+    const wav = () => {
+      const n = 4410, b = Buffer.alloc(44 + n * 2);   // 0.1 秒、44.1 kHz、16-bit 單聲道正弦
+      b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16);
+      b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(44100, 24); b.writeUInt32LE(88200, 28);
+      b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+      for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(i / 10) * 8000), 44 + i * 2);
+      return b;
+    };
+    const fsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phono-fs-'));
+    const mk = (rel, data) => { const p = path.join(fsDir, 'src', rel); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, data); return p; };
+    const w1 = wav(), p1 = mk('a/01 one.wav', w1); mk('a/b/10 ten.WAV', wav()); mk('a/b/2 two.wav', wav()); mk('top.wav', wav());
+    mk('a/notes.txt', 'x'); mk('a/.hidden.wav', wav()); mk('.hiddendir/z.wav', wav());
+    const srcRoot = path.join(fsDir, 'src');
+    ({ app, page } = await launch());
+    const call = (fn, ...args) => page.evaluate(async ([fn, args]) => {
+      try {
+        const d = window.phonoDesktop;
+        if (typeof d[fn] !== 'function') return { err: '沒有 ' + fn };
+        const r = await d[fn](...args.map(a => a && a.__u8 ? new Uint8Array(a.__u8) : a));
+        return { r: r instanceof Uint8Array ? { __u8: Array.from(r) } : r };
+      } catch (e) { return { err: String(e.message || e) }; }
+    }, [fn, args]);
+    const names = ['fsPickFolder', 'fsPickAudioFiles', 'fsPickOpenWorkspace', 'fsPickSaveWorkspace', 'fsScanSources', 'fsStat', 'fsReadFile', 'fsWriteFile', 'fsOutputPath', 'fsReadTags', 'fsShowInFolder'];
+    check('fs 橋接函式齊全', await page.evaluate(n => n.every(k => typeof window.phonoDesktop[k] === 'function'), names));
+
+    const scan = (await call('fsScanSources', [{ type: 'folder', path: srcRoot }, { type: 'file', path: p1 }, { type: 'file', path: path.join(fsDir, 'nope.wav') }])).r || [];
+    const rels = scan.map(i => i.rel);
+    check('scanSources 只找出 WAV 並依自然排序', JSON.stringify(rels) === JSON.stringify(['a/01 one.wav', 'a/b/2 two.wav', 'a/b/10 ten.WAV', 'top.wav']), JSON.stringify(rels));
+    check('scanSources 欄位正確且去除重複', scan.length === 4 && scan[0].path === p1 && scan[0].root === srcRoot && scan[0].name === '01 one.wav' && scan[0].size === w1.length && scan[0].mtime > 0);
+    const single = (await call('fsScanSources', [{ type: 'file', path: p1 }])).r || [];
+    check('scanSources 單檔 root 為 null', single.length === 1 && single[0].root === null && single[0].rel === '01 one.wav');
+    check('scanSources 拒絕錯誤參數', !!(await call('fsScanSources', 'x')).err && !!(await call('fsScanSources', [{ type: 'bad', path: srcRoot }])).err);
+
+    const st = (await call('fsStat', p1)).r;
+    check('stat 取得大小與時間', st && st.size === w1.length && st.mtime > 0);
+    check('stat 不存在回傳 null', (await call('fsStat', path.join(fsDir, 'nope'))).r === null);
+
+    const rd = (await call('fsReadFile', p1)).r;
+    check('readFile 位元組正確', rd && rd.__u8.length === w1.length && Buffer.from(rd.__u8).equals(w1));
+    const txt = mk('a/notes.txt', 'x');
+    check('readFile 拒絕 .txt', !!(await call('fsReadFile', txt)).err);
+
+    const outRack = path.join(fsDir, 'out', 'x', 'y', 'test.waxrack');
+    const wr = await call('fsWriteFile', outRack, { __u8: [1, 2, 3, 4] });
+    check('writeFile 寫入 .waxrack（含建立資料夾）', !wr.err && fs.existsSync(outRack) && fs.readFileSync(outRack).equals(Buffer.from([1, 2, 3, 4])) && !fs.existsSync(outRack + '.tmp'), wr.err || '');
+    check('writeFile 拒絕 .exe', !!(await call('fsWriteFile', path.join(fsDir, 'bad.exe'), { __u8: [1] })).err && !fs.existsSync(path.join(fsDir, 'bad.exe')));
+
+    const out = path.join(fsDir, 'out');
+    const op = (await call('fsOutputPath', out, 'Al:bum?/ 01 "Song".. ')).r;
+    check('outputPath 清掉非法字元', op === path.join(out, 'Album', ' 01 Song.waxrack'), op);
+    check('outputPath 拒絕 ../../escape', !!(await call('fsOutputPath', out, '../../escape')).err || (await call('fsOutputPath', out, '../../escape')).r?.startsWith(out + path.sep));
+    check('outputPath 路徑留在輸出資料夾內', (await call('fsOutputPath', out, '../../escape/x')).r?.startsWith(out + path.sep) === true);
+
+    const tags = await call('fsReadTags', p1);
+    check('readTags 對 WAV 不丟例外', !tags.err && tags.r && typeof tags.r === 'object', JSON.stringify(tags).slice(0, 120));
+    check('readTags 壞檔回傳空物件', JSON.stringify((await call('fsReadTags', txt)).r) === '{}');
+    await app.evaluate(({ app }) => { app.quit(); }).catch(() => {}); await app.close().catch(() => {});
+    fs.rmSync(fsDir, { recursive: true, force: true });
+  }
 } catch (e) { console.error(e); failed = true; }
 finally { fs.rmSync(saveDir, { recursive: true, force: true }); fs.rmSync(userData, { recursive: true, force: true }); }
 console.log(failed ? 'FAIL' : 'PASS'); process.exit(failed ? 1 : 0);

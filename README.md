@@ -14,9 +14,12 @@
 - **蠟筒架**：多支蠟筒分組、拖曳排序、同組無縫接續播放。
 - **剖面視窗**：即時顯示溝槽縱剖面、橫剖面、唱頭機構與能量路徑。
 - **輪播模式**：只留播放列，循環播放架上所有蠟筒，鏡頭自動巡覽留聲機各部件並附上說明字卡。
+- **純播放模式**：按 ♫ 按鈕或 P 鍵開啟播放器，蓋住整個視窗並停止繪製 3D 場景。可以排播放佇列、上一首／下一首、隨機播放、重複（關閉／全部／單曲）。網頁版的曲庫就是蠟筒架上的各組；桌面版則顯示檔案標籤中的封面與歌名。
 - **存檔與匯出**：`.waxrack` 保存刻痕、磨損、群組與設定；也可匯出 WAV。匯出前可選擇是否包含轉速調整與失真。
 - **離線版**：整個程式建置成單一 HTML 檔，雙擊就能用，不需要網路。
+- **無 WebGL 備援**：瀏覽器不支援 WebGL 時，3D 畫面會自動關閉並提示，聲音、剖面視窗與其他功能照常使用。
 - **桌面版（Windows）**：存檔對話框、從檔案總管開啟檔案、系統匣、關閉視窗後繼續在背景播放。
+- **曲庫與批次轉檔（桌面版）**：把資料夾或單一音檔加入工作區（`.waxspace`），批次轉成 `.waxrack`，逐首追蹤轉檔狀態。
 
 ### 快捷鍵
 
@@ -26,7 +29,8 @@
 | R | 錄音 |
 | M | 靜音 |
 | T | 輪播模式 |
-| Esc | 結束輪播（播放繼續）；不在輪播時停止 |
+| P | 開啟／關閉播放器 |
+| Esc | 關閉播放器；結束輪播（播放繼續）；不在輪播時停止 |
 
 拉桿可以用滑鼠滾輪逐格微調（按住 Shift 一次 10 格），雙擊拉桿恢復預設值。
 
@@ -62,10 +66,16 @@ npm run dist:win   # 打包 Windows 版到 release/
 - 只會執行一個實例：再次開啟時，檔案會交給已開著的視窗。
 - 系統匣選單：顯示視窗、播放／停止、停止、結束。關閉視窗只會縮到系統匣，播放不中斷。
 - 記住視窗大小與上次存檔的資料夾。
+- 工作區與批次轉檔：加入資料夾（會遞迴掃描子資料夾）或單一音檔，記錄在 `.waxspace` 工作區檔案裡。可以指定輸出資料夾，並選擇輸出的目錄結構（依來源資料夾分類，或全部放在同一層）與轉檔設定。上次開啟的工作區會自動重新載入。
+- 每首歌都有轉檔狀態：未轉檔、轉檔中、已轉檔、設定已變更、來源已變更、轉檔失敗。一次只轉一首，可以隨時停止（會在目前這首完成後停止）。批次轉檔使用所選蠟材建議的刻錄參數，結果不受目前面板設定影響。
+- 播放還沒轉檔的歌時，會先即時轉檔再播放；有設定輸出資料夾時會一併存檔。
+- 歌名、演出者、專輯與封面都從音檔標籤讀取。
+- 播放時只把目前這首和下一首放上蠟筒架，播完就移除，所以曲庫的大小不再受 24 支的限制。
+- 系統媒體鍵與 Windows 的媒體控制面板可以控制播放、暫停、上一首與下一首。
 
 發布新版本：把 `package.json` 的 `version` 改好並推送對應的標籤（例如 `v0.2.0`），GitHub Actions 會在 Windows 上建置這兩個檔案並建立 Release（`.github/workflows/release.yml`）。
 
-主程序支援兩個環境變數：`PHONO_DEV_URL`（改載入 Vite dev server）與 `PHONO_TEST_SAVE_DIR`（測試用，跳過存檔對話框，直接寫入這個資料夾）。
+主程序支援三個環境變數：`PHONO_DEV_URL`（改載入 Vite dev server）、`PHONO_TEST_SAVE_DIR`（測試用，跳過存檔對話框，直接寫入這個資料夾），以及 `PHONO_TEST_PICK`（測試用，各檔案與資料夾對話框都不開啟，依序回傳這個 JSON 指定的值：`{"folders":[…],"files":[…],"openWorkspace":"…","saveWorkspace":"…"}`）。
 
 ### 部署
 
@@ -81,6 +91,9 @@ python3 tests/make_test_audio.py                               # 產生 8 秒測
 python3 tests/smoke_test.py ~/phono-test/tone.wav out/         # 端對端：刻錄 → 群組 → 存檔 → 載入 → 換排
 python3 tests/offline_check.py                                 # 斷網用 file:// 開啟離線版
 python3 tests/layout_check.py                                  # 多種解析度下面板是否重疊（含截圖）
+python3 tests/player_check.py                                  # 網頁版播放器：排入佇列、自動接續下一首
+python3 tests/nowebgl_check.py                                 # 瀏覽器沒有 WebGL 時，程式仍能正常啟動
+node tests/library_check.mjs                                   # 桌面版：工作區、批次轉檔、跨歌播放（Linux 無頭環境用 xvfb-run -a 執行）
 node tests/electron_check.mjs                                  # 桌面版端對端（Linux 無頭環境用 xvfb-run -a 執行）
 ```
 
@@ -92,6 +105,7 @@ node tests/electron_check.mjs                                  # 桌面版端對
 |---|---|
 | `index.html` | Vite 入口（HTML 外殼） |
 | `src/main.js` | 主程式：3D 場景、介面、音源、蠟筒架、存檔與匯出 |
+| `src/music.js` | 播放器與曲庫：純播放模式、播放佇列，以及桌面版的工作區與批次轉檔。由 `initMusic(api)` 接上主程式 |
 | `src/style.css` | 樣式 |
 | `src/worklet/phono.js` | AudioWorklet：刻錄與播放的物理模擬。以字串匯入，執行時用 Blob URL（`file://` 下改用 data URL）載入 |
 | `src/platform/` | 平台層：網頁版（`web.js`）與桌面版（`electron.js`）共用同一份程式，差異只在這裡 |
@@ -110,6 +124,7 @@ node tests/electron_check.mjs                                  # 桌面版端對
 | `saveFile(blob, 檔名)` | 回傳存檔路徑；使用者取消時回傳 `null`。網頁版是觸發下載，無法得知是否取消，一律回傳檔名 |
 | `onOpenFile(cb)` | 僅桌面版：從外部開啟檔案時收到 `{name, data}` |
 | `onCommand(cb)` | 僅桌面版：系統匣選單的指令（`'toggle-play'`、`'stop'`） |
+| `fs` | 僅桌面版（網頁版為 `undefined`）：選取資料夾與檔案、掃描來源、讀寫檔案、讀取標籤、在檔案總管中顯示。讀寫只限音檔與 `.waxrack`／`.waxspace`，輸出路徑不能跳出輸出資料夾 |
 
 ## 架構
 
@@ -192,7 +207,7 @@ groupOv   = { [gid]: { rpm, stylusR, tipOn, volume } }   // 使用者對整組�
 - `zq`、`wq` 以 0.005 µm 為單位，刻痕為負值。
 - 使用中那一支的資料在 worklet 裡，換下來時才用 `storeActive()` 取回並量化。
 - `rack` 的順序就是播放順序，同一組的蠟筒連續排列。
-- 架上最多 24 支，因為所有資料都放在記憶體裡。
+- 架上最多 24 支，因為所有資料都放在記憶體裡。桌面版的播放器例外：只暫存目前這首和下一首（見「桌面版（Electron）」）。
 
 ### `.waxrack` 檔案格式（v3）
 
@@ -224,6 +239,8 @@ groupOv   = { [gid]: { rpm, stylusR, tipOn, volume } }   // 使用者對整組�
 | 輪播模式 | `TOUR`、`startCarousel`、`tourStep` |
 | 存檔與匯出 | `askExport`、`saveRack`、`loadAny`、`exportAll`、`renderRange`、`encodeWav` |
 | 桌面版開檔 | `openExternal` |
+| 轉檔核心 | `burnBuffer`、`normalizeGain`、`encodeRackBlob`、`parseRack`、`convertSong` |
+| 播放器與曲庫 | `src/music.js` 的 `initMusic`；主程式提供給它的 `loadSong`、`playGroup`、`musicStatus` |
 
 Worklet 的主要進入點：`class Phono`、`tip(`、`getZ(`、`msg(`。
 
@@ -238,12 +255,12 @@ Worklet 的主要進入點：`class Phono`、`tip(`、`getZ(`、`msg(`。
 
 ## 發展方向
 
-桌面版的目標是成為真正的音樂播放器：
+工作區、批次轉檔與純播放模式都已完成。接下來可以做：
 
-1. **工作區**：可以加入整個資料夾或單一檔案，追蹤每首歌的轉檔狀態。
-2. **批次轉檔**：把選取的音樂轉成 `.waxrack`，輸出到使用者指定的資料夾；已轉過的檔案自動略過，中斷後可以接續。
-3. **純播放模式**：不載入 3D 場景的輕量播放介面，含播放佇列、隨機與重複播放、媒體鍵。
-4. 只把目前與下一首放在記憶體，取代現在蠟筒架 24 支的上限。
+1. **自動更新與程式碼簽章**：目前要手動下載新版；簽章後 Windows 就不會跳出未知發行者的警告。
+2. **網頁版的工作區**：用 File System Access API 讓網頁版也能加入資料夾、追蹤轉檔狀態。
+3. **專輯封面與標籤編輯**：目前只會讀取標籤，還不能修改。
+4. **歌與歌之間的交叉淡化**：目前換歌是接續播放，還沒有淡入淡出。
 
 ## 授權
 

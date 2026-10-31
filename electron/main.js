@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parseFile } from 'music-metadata';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEV_URL = process.env.PHONO_DEV_URL;               // 開發時指向 Vite dev server（npm run electron:dev）
@@ -99,6 +100,112 @@ ipcMain.handle('save-file', async (_e, { data, name }) => {
   state.saveDir = path.dirname(target); saveState();
   return target;
 });
+
+// ---- 檔案系統（工作區／批次轉換／音樂播放器）：全部走固定通道，路徑與副檔名在這裡檢查 ----
+const WS_EXT = ['.waxrack', '.waxspace'];
+const READ_EXT = [...AUDIO_EXT, ...WS_EXT];
+const MAX_READ = 2 * 1024 ** 3, MAX_COVER = 1.5 * 1024 * 1024;
+const extOf = p => path.extname(p).toLowerCase();
+const str = (v, what) => { if (typeof v !== 'string' || !v || v.includes('\0')) throw new Error(`參數錯誤：${what}`); return v; };
+const absPath = (v, what) => path.resolve(str(v, what));
+const audioFilter = { name: '音檔', extensions: AUDIO_EXT.map(e => e.slice(1)) };
+const wsFilter = { name: '工作區', extensions: ['waxspace'] };
+const pickOpen = async (properties, filters) => {
+  const r = await dialog.showOpenDialog(win, { properties, filters });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths;
+};
+// 遞迴掃描：只收音檔，略過隱藏項目與符號連結資料夾，讀不到的子資料夾直接跳過
+async function walk(dir, root, out) {
+  let ents;
+  try { ents = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+  for (const d of ents) {
+    if (d.name.startsWith('.')) continue;
+    const p = path.join(dir, d.name);
+    if (d.isDirectory()) await walk(p, root, out);
+    else if ((d.isFile() || d.isSymbolicLink()) && AUDIO_EXT.includes(extOf(d.name))) {
+      try {
+        const st = await fs.stat(p);
+        if (st.isFile()) out.push({ path: p, root, rel: path.relative(root, p).split(path.sep).join('/'), name: d.name, size: st.size, mtime: st.mtimeMs });
+      } catch {}
+    }
+  }
+}
+const natCmp = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+const safeSeg = s => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/[. ]+$/, '');
+
+// 自動測試：PHONO_TEST_PICK＝{"folders":[…],"files":[…],"openWorkspace":"…","saveWorkspace":"…"}，各對話框依序回傳這些值、不跳視窗
+const TEST_PICK = (() => { try { return JSON.parse(process.env.PHONO_TEST_PICK || 'null'); } catch { return null; } })();
+ipcMain.handle('fs:pickFolder', async () => TEST_PICK ? (TEST_PICK.folders?.shift() ?? null) : (await pickOpen(['openDirectory', 'createDirectory']))?.[0] ?? null);
+ipcMain.handle('fs:pickAudioFiles', async () => TEST_PICK ? (TEST_PICK.files || []) : (await pickOpen(['openFile', 'multiSelections'], [audioFilter])) ?? []);
+ipcMain.handle('fs:pickOpenWorkspace', async () => TEST_PICK ? (TEST_PICK.openWorkspace ?? null) : (await pickOpen(['openFile'], [wsFilter]))?.[0] ?? null);
+ipcMain.handle('fs:pickSaveWorkspace', async (_e, defaultName) => {
+  if (TEST_PICK) return TEST_PICK.saveWorkspace ?? null;
+  const name = path.basename(typeof defaultName === 'string' && defaultName ? defaultName : '工作區.waxspace');
+  const r = await dialog.showSaveDialog(win, { defaultPath: path.join(state.saveDir || app.getPath('documents'), name), filters: [wsFilter] });
+  if (r.canceled || !r.filePath) return null;
+  state.saveDir = path.dirname(r.filePath); saveState();
+  return r.filePath;
+});
+ipcMain.handle('fs:scan', async (_e, sources) => {
+  if (!Array.isArray(sources)) throw new Error('參數錯誤：sources');
+  const map = new Map();
+  for (const s of sources) {
+    if (!s || (s.type !== 'folder' && s.type !== 'file')) throw new Error('參數錯誤：source.type');
+    const p = absPath(s.path, 'source.path'), items = [];
+    if (s.type === 'folder') await walk(p, p, items);
+    else {
+      try {
+        const st = await fs.stat(p);
+        if (st.isFile()) items.push({ path: p, root: null, rel: path.basename(p), name: path.basename(p), size: st.size, mtime: st.mtimeMs });
+      } catch {}
+    }
+    for (const it of items) if (!map.has(it.path)) map.set(it.path, it);
+  }
+  return [...map.values()].sort((a, b) => natCmp(a.root || '', b.root || '') || natCmp(a.rel, b.rel));
+});
+ipcMain.handle('fs:stat', async (_e, p) => {
+  try { const st = await fs.stat(absPath(p, 'path')); return { size: st.size, mtime: st.mtimeMs }; } catch { return null; }
+});
+ipcMain.handle('fs:readFile', async (_e, p) => {
+  p = absPath(p, 'path');
+  if (!READ_EXT.includes(extOf(p))) throw new Error('不允許讀取此類型的檔案');
+  if ((await fs.stat(p)).size > MAX_READ) throw new Error('檔案超過 2 GB');
+  return new Uint8Array(await fs.readFile(p));
+});
+ipcMain.handle('fs:writeFile', async (_e, p, data) => {
+  p = absPath(p, 'path');
+  if (!WS_EXT.includes(extOf(p))) throw new Error('只允許寫入 .waxrack 與 .waxspace');
+  if (!(data instanceof Uint8Array)) throw new Error('參數錯誤：data');
+  await fs.mkdir(path.dirname(p), { recursive: true });
+  const tmp = p + '.tmp';   // 先寫暫存檔再改名，中途失敗不會留下半個檔案
+  try { await fs.writeFile(tmp, data); await fs.rename(tmp, p); }
+  catch (e) { await fs.rm(tmp, { force: true }).catch(() => {}); throw e; }
+});
+ipcMain.handle('fs:outputPath', (_e, outDir, relNoExt) => {
+  const base = absPath(outDir, 'outDir');
+  const segs = str(relNoExt, 'relNoExt').split('/').map(safeSeg).filter(s => s && s !== '.' && s !== '..');
+  if (!segs.length) throw new Error('檔名無效');
+  const out = path.join(base, ...segs) + '.waxrack';
+  const rel = path.relative(base, out);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('輸出路徑不在輸出資料夾內');
+  return out;
+});
+ipcMain.handle('fs:readTags', async (_e, p) => {
+  p = absPath(p, 'path');
+  try {
+    const { common, format } = await parseFile(p, { duration: true });
+    const r = {};
+    if (common.title) r.title = common.title;
+    if (common.artist) r.artist = common.artist;
+    if (common.album) r.album = common.album;
+    if (common.track?.no) r.track = common.track.no;
+    if (format.duration) r.duration = format.duration;
+    const pic = common.picture?.[0];
+    if (pic && pic.data.length <= MAX_COVER) r.cover = { mime: pic.format, data: new Uint8Array(pic.data) };
+    return r;
+  } catch { return {}; }
+});
+ipcMain.handle('fs:showInFolder', (_e, p) => { shell.showItemInFolder(absPath(p, 'path')); });
 
 // ---- 單一執行個體：第二次啟動（例如再雙擊一個 .waxrack）交給已開的視窗 ----
 if (!app.requestSingleInstanceLock()) app.quit();

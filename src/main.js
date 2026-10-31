@@ -2,6 +2,7 @@
 import './style.css';
 import workletSrc from './worklet/phono.js?raw';
 import { platform } from './platform/index.js';
+import { initMusic } from './music.js';
 // 對外連結；下載連結一律指向最新版的 Release 頁
 const REPO_URL='https://github.com/LookLikeAName/wax-phonograph', RELEASES_URL=REPO_URL+'/releases/latest', WEB_URL='https://wax-phonograph.pages.dev';
 document.body.classList.toggle('desktop',platform.name==='electron');   // 桌面版隱藏下載連結（.webOnly）、改顯示線上版連結（.deskOnly）
@@ -28,7 +29,10 @@ const PRESETS={high:{room:true,shadows:true,sunShadow:true,rays:true,particles:t
   off:{}};
 const PERF_KEYS=['xSpeed','xDist','saveQ','wheelDeg','masterVol','muted','quality','room','shadows','sunShadow','rays','particles','res','fpsCap'];
 try{ const sv=JSON.parse(localStorage.getItem('phonograph.perf')||'null'); if(sv){ if(PRESETS[sv.quality]) Object.assign(U,PRESETS[sv.quality]); for(const k of PERF_KEYS) if(k in sv) U[k]=sv[k]; } }catch(e){}
-function savePerf(){ try{ const o={}; for(const k of PERF_KEYS) o[k]=U[k]; localStorage.setItem('phonograph.perf',JSON.stringify(o)); }catch(e){} }
+// WebGL 不可用時（無 GPU、驅動被封鎖）整個 3D 關閉，聲音與剖面照常；先探測，建立 renderer 失敗時再改為 false
+let has3D=(()=>{ try{ const c=document.createElement('canvas'), g=c.getContext('webgl2')||c.getContext('webgl'); if(!g) return false; const x=g.getExtension('WEBGL_lose_context'); if(x) x.loseContext(); return true; }catch(e){ return false; } })();
+if(!has3D) U.quality='off';
+function savePerf(){ try{ const o={}; for(const k of PERF_KEYS) o[k]=U[k]; if(!has3D) o.quality='med'; localStorage.setItem('phonograph.perf',JSON.stringify(o)); }catch(e){} }
 const WK=new Set(['rDrive','rRpm','rRatio','rCrankGov','rHorn','rFlutter','rFlutterAmt','autoLift','overdub','waxWear','waxGrain','waxCutLP','pitch','inGain','baseDepth','monitor','drive','rpm','ratio','crankGov','tipOn','stylusR','mistrack','trackAccel','horn','volume','wearOn','wearRate',
   'crosstalk','cutterR','ecc','eccMm','flutter','flutterAmt','dust','dustPct','scratch','crack','mold','moldAmt','scratches','crackA0','crackSlope']);
 const capFor=k=>Math.round(GROOVE_UM/({brown:254,black:254,amber:127}[k]||254));   // 圈數＝刻紋區長度÷圈距
@@ -48,7 +52,8 @@ let ctx=null,node=null,inputBus,master,inAn,outAn,workletURL;
 let st=null,stTime=0,dispS=0,mode='idle',hasContent=false,recMax=0,pendingSrc=false;
 // 蠟筒架：未裝上的蠟筒以 Int16（0.005 µm）壓縮保存在記憶體
 let rackSeq=1, groupSeq=1; const groupOv={}, groupMeta={}, rackSel=new Set(); const rack=[{id:1,T:0,zq:null,wq:null,used:0,wax:'brown',group:1}]; let activeId=1, nextInfo=null;
-let carousel=false, tour=null;   // 輪播模式：只留播放列、循環播放架上所有有錄音的蠟筒、自動運鏡
+let carousel=false, tour=null;
+let playerMode=false;   // 純播放模式（src/music.js）：播放器蓋住整個畫面，3D 場景停止繪製   // 輪播模式：只留播放列、循環播放架上所有有錄音的蠟筒、自動運鏡
 let liveSrc=[],micStream=null,micNode=null,fileBuffer=null,fileTitle='',toneOsc=null,snapResolve=null;   // fileTitle：音檔名稱（去掉副檔名），快速刻錄時當群組名
 
 function sendParams(keys){ if(!node) return; const o={}; for(const k of keys) o[k]=P[k]; node.port.postMessage({type:'params',params:o}); }
@@ -247,6 +252,7 @@ const SPEC=[
     <div class="hint keep" id="fileMsg">.waxrack 保存刻痕、磨損、順序、群組與名稱、蠟材、錄音轉速與唱針刻刀設定。載入時會加到架上，不會取代現有蠟筒。匯出 WAV 依架上順序接續，套用目前的聲學與失真設定。</div>`},
  ]},
  {title:'效能 · Performance',items:[
+  {t:'html',html:`<div class="hint" id="no3dNote" hidden>這台電腦無法使用 3D（WebGL），已改為無 3D 模式；聲音、剖面與所有功能照常。</div>`},
   {t:'select',k:'quality',u:1,label:'畫質預設',opts:[['high','高：窗光投影＋光束塵埃'],['med','中：洋房場景＋陰影'],['low','低：無場景、無陰影、半解析度'],['off','關閉 3D（只保留聲音與剖面）']]},
   {t:'check',k:'room',u:1,label:'洋房窗邊場景'},
   {t:'check',k:'shadows',u:1,label:'機構陰影'},
@@ -336,7 +342,7 @@ function buildPanel(){
       const tabKeys=()=>sec.tabs?sectionResetKeys(sec,U.pmTab):rkeys;
       const row=document.createElement('div'); row.className='row resetRow'; row._home=det; if(sec.rec) row.dataset.dock='c'; else if(sec.dockCol) row.dataset.dock=sec.dockCol;
       row.innerHTML=`<button class="btn resetBtn" title="${sec.title.startsWith('效能')?'回到「中」畫質預設':'只重設這一區的拉桿與開關'}">↺ 恢復本區預設</button>`;
-      row.querySelector('button').onclick=()=>{ if(sec.title.startsWith('效能')){ const q=$('sel_quality'); q.value='med'; q.dispatchEvent(new Event('change')); toast('畫質已恢復為「中」'); return; }
+      row.querySelector('button').onclick=()=>{ if(sec.title.startsWith('效能')){ if(!has3D){ toast('無 3D 模式，沒有可恢復的畫質設定'); return; } const q=$('sel_quality'); q.value='med'; q.dispatchEvent(new Event('change')); toast('畫質已恢復為「中」'); return; }
         resetKeys(tabKeys()); toast(`「${sec.title.split(' · ')[0]}」${sec.tabs?(U.pmTab==='rec'?'的錄音分頁':'的播放分頁'):''}已恢復預設`); };
       det.appendChild(row);
     }
@@ -393,10 +399,16 @@ function onChange(k){
   }
 }
 
+function lock3DUI(){   // 無 WebGL：畫質只能是「關閉」，其餘 3D 選項停用
+  const n=document.getElementById('no3dNote'); if(n) n.hidden=has3D; if(has3D) return;
+  const q=document.getElementById('sel_quality'); if(q){ for(const o of q.options) o.disabled=o.value!=='off'; q.value='off'; q.disabled=true; }
+  for(const k of ['room','shadows','sunShadow','rays','particles','res','fpsCap']){ const e=document.querySelector(`input[data-ck="${k}"]`)||document.getElementById('sel_'+k); if(e) e.disabled=true; }
+}
 function syncPerfUI(){
   const q=document.getElementById('sel_quality'); if(q) q.value=U.quality;
   for(const k of ['room','shadows','sunShadow','rays','particles']){ const c=document.querySelector(`input[data-ck="${k}"]`); if(c) c.checked=!!U[k]; }
   for(const k of ['res','fpsCap']){ const e=document.getElementById('sel_'+k); if(e) e.value=U[k]; }
+  lock3DUI();
 }
 function masterGain(){ return U.muted?0:Math.pow(U.masterVol/100,2)*2; } // 平方曲線較符合聽感，100% ≈ +6 dB
 function applyVolume(){
@@ -436,13 +448,19 @@ function updateCylInfo(){
 }
 
 // ---------------- 3D 場景 ----------------
-const renderer=new THREE.WebGLRenderer({canvas:$('gl'),antialias:true,alpha:true});
+let renderer;
+if(has3D) try{ renderer=new THREE.WebGLRenderer({canvas:$('gl'),antialias:true,alpha:true}); }catch(e){ has3D=false; }
+if(!has3D){   // 空殼 renderer：只提供場景程式會碰到的成員，全部不做事
+  const nop=()=>{};
+  renderer={domElement:$('gl'),setPixelRatio:nop,setSize:nop,render:nop,dispose:nop,shadowMap:{enabled:false,needsUpdate:false,type:0},toneMapping:0,toneMappingExposure:1,info:{},capabilities:{getMaxAnisotropy:()=>1}};
+  U.quality='off';
+}
 renderer.setPixelRatio(Math.min(2,devicePixelRatio)*parseFloat(U.res)); renderer.setSize(innerWidth,innerHeight);
 renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.08;
 renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 const scene=new THREE.Scene();
-const pmrem=new THREE.PMREMGenerator(renderer);
-const basicEnvTex=pmrem.fromScene(new RoomEnvironment(renderer),0.04).texture; scene.environment=basicEnvTex;
+const pmrem=has3D?new THREE.PMREMGenerator(renderer):null;
+const basicEnvTex=has3D?pmrem.fromScene(new RoomEnvironment(renderer),0.04).texture:null; scene.environment=basicEnvTex;
 const camera=new THREE.PerspectiveCamera(34,innerWidth/innerHeight,0.3,600);
 const HOME={pos:new THREE.Vector3(38,30,52),tgt:new THREE.Vector3(0,11.5,-3)};
 camera.position.copy(HOME.pos);
@@ -833,6 +851,7 @@ function captureRoomEnv(){
 }
 let lastShadowCfg='';
 function applyPerf(){
+  if(!has3D) U.quality='off';
   const off=U.quality==='off';
   $('gl').style.visibility=off?'hidden':'visible';
   renderer.setPixelRatio(Math.min(2,devicePixelRatio)*parseFloat(U.res)); renderer.setSize(innerWidth,innerHeight);
@@ -844,7 +863,7 @@ function applyPerf(){
   renderer.shadowMap.enabled=key.castShadow||sun.castShadow;
   if(cfg!==lastShadowCfg){ lastShadowCfg=cfg; renderer.shadowMap.needsUpdate=true; scene.traverse(o=>{ if(o.material){ for(const m of [].concat(o.material)) m.needsUpdate=true; } }); }
   if(U.room&&!off){ if(!roomEnvTex) captureRoomEnv(); scene.environment=roomEnvTex; } else scene.environment=basicEnvTex;
-  savePerf();
+  lock3DUI(); savePerf();
 }
 
 
@@ -1354,6 +1373,29 @@ function drawDepthWin(now){
 function burnPlan(sel){ const rpm=Math.max(20,P.rRpm), cap=capFor(U.waxColor), per=cap/(rpm/60); return {rpm,cap,per,n:Math.max(1,Math.ceil((sel+0.3)/per))}; }
 function burnEstimate(sel){ const el=$('fBurnInfo'); if(!el) return; const b=burnPlan(sel);
   el.textContent=`以 ${b.rpm} rpm 刻在${WAXSPEC[U.waxColor].name}上，每支約 ${fmtT(b.per).slice(0,5)}，共需 ${b.n} 支。不用等待真實時間，刻刀物理與錄音時相同。`; }
+// 把一段音訊離線刻成蠟筒（不碰介面與蠟筒架）。回傳 {rpm, cyls:[{T,z,used}]}（依序）。
+// waxPreset：用該蠟材的建議刻錄參數（批次轉檔用）；否則沿用目前面板上的錄音設定（快速刻錄用）
+async function burnBuffer(buffer,{start=0,dur=buffer.duration-start,gainDb=0,wax=U.waxColor,rpm=Math.max(20,P.rRpm),waxPreset=false,onProgress}={}){
+  const w=WAXSPEC[wax]||WAXSPEC.brown, cap=capFor(wax);
+  const sr=48000, lead=N*0.04, recFrames=Math.round((dur+0.05)*sr), total=recFrames+sr*0.05;
+  const octx=new OfflineAudioContext(1,Math.ceil(total),sr);
+  await octx.audioWorklet.addModule(workletURL);
+  const params={}; for(const k of WK) params[k]=P[k]; Object.assign(params,{rDrive:'motor',rRpm:rpm,monitor:false,overdub:'carve'});
+  if(waxPreset) Object.assign(params,{waxWear:w.wear,waxGrain:w.grain,waxCutLP:w.cutLP,pitch:w.pitch},w.rec);
+  const wn=new AudioWorkletNode(octx,'phono',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',channelInterpretation:'speakers',
+    processorOptions:{offline:true,offRec:true,T:cap,params,recFrames,startS:lead}});
+  const got=[]; let finish; const done=new Promise(r=>finish=r);
+  wn.port.onmessage=e=>{ const m=e.data; if(m.type!=='offCyl') return; got.push(m); if(m.final) finish(); };
+  const src=octx.createBufferSource(), g=octx.createGain(); src.buffer=buffer; g.gain.value=Math.pow(10,gainDb/20);
+  src.connect(g); g.connect(wn); wn.connect(octx.destination); src.start(0,start,dur);
+  if(onProgress) for(let t=2;t<dur;t+=2){ octx.suspend(t).then(()=>{ onProgress(t/dur,got.length); octx.resume(); }).catch(()=>{}); }
+  await octx.startRendering();
+  await Promise.race([done,new Promise(r=>setTimeout(r,3000))]);
+  return {rpm,cyls:got.filter(m=>m.used>0).sort((a,b)=>a.idx-b.idx).map(m=>({T:m.T,z:m.z,used:m.used}))};
+}
+// 讓整段音訊峰值落在 −1 dBFS 所需的增益（dB）
+function normalizeGain(buffer){ let pk=1e-6; for(let c=0;c<buffer.numberOfChannels;c++){ const d=buffer.getChannelData(c); for(let i=0;i<d.length;i++){ const a=d[i]<0?-d[i]:d[i]; if(a>pk) pk=a; } }
+  return Math.max(-24,Math.min(24,-1-20*Math.log10(pk))); }
 async function quickBurn(){
   if(!fileBuffer){ toast('請先選擇音檔'); return; }
   if(!node){ toast('請先開啟留聲機'); return; }
@@ -1362,20 +1404,8 @@ async function quickBurn(){
   doStop(); await storeActive();
   const btn=$('fBurn'); btn.disabled=true; const label=btn.textContent;
   try{
-    const sr=48000, lead=N*0.04, recFrames=Math.round((sel+0.05)*sr), total=recFrames+sr*0.05;
-    const octx=new OfflineAudioContext(1,Math.ceil(total),sr);
-    await octx.audioWorklet.addModule(workletURL);
-    const params={}; for(const k of WK) params[k]=P[k]; Object.assign(params,{rDrive:'motor',rRpm:plan.rpm,monitor:false,overdub:'carve'});
-    const wn=new AudioWorkletNode(octx,'phono',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',channelInterpretation:'speakers',
-      processorOptions:{offline:true,offRec:true,T:plan.cap,params,recFrames,startS:lead}});
-    const got=[]; let finish; const done=new Promise(r=>finish=r);
-    wn.port.onmessage=e=>{ const m=e.data; if(m.type!=='offCyl') return; got.push(m); btn.textContent=`刻錄中… 已完成 ${got.length} 支`; if(m.final) finish(); };
-    const src=octx.createBufferSource(), g=octx.createGain(); src.buffer=fileBuffer; g.gain.value=Math.pow(10,FC.gain/20);
-    src.connect(g); g.connect(wn); wn.connect(octx.destination); src.start(0,FC.in,sel);
-    for(let t=2;t<sel;t+=2){ octx.suspend(t).then(()=>{ btn.textContent=`刻錄中… ${Math.round(t/sel*100)}%`; octx.resume(); }).catch(()=>{}); }
-    await octx.startRendering();
-    await Promise.race([done,new Promise(r=>setTimeout(r,3000))]);
-    const list=got.filter(m=>m.used>0).sort((a,b)=>a.idx-b.idx);
+    const res=await burnBuffer(fileBuffer,{start:FC.in,dur:sel,gainDb:FC.gain,rpm:plan.rpm,onProgress:(f,n)=>{ btn.textContent=n?`刻錄中… 已完成 ${n} 支・${Math.round(f*100)}%`:`刻錄中… ${Math.round(f*100)}%`; }});
+    const list=res.cyls;
     if(!list.length){ toast('沒有刻到任何內容（音檔是否太小聲？）'); return; }
     // 放上蠟筒架：接在目前這支後面；若目前這支是空白的就直接用掉
     let at=rackIndex(activeId); const act=rack[at]; const replaceActive=act&&act.used===0;
@@ -1513,30 +1543,40 @@ function saveBaseName(list){
   const names=gs.map(g=>{ const mem=rack.filter(e=>e.group===g); return ((groupMeta[g]&&groupMeta[g].name)||mem.length>1)?groupName(g):cylName(mem[0]); });
   const s=(names.length>2?`${names.slice(0,2).join('、')} 等 ${names.length} 組`:names.join('、')).replace(/[\\/:*?"<>|\x00-\x1f]/g,'').trim().slice(0,80);
   return s||`phonograph-rack-${stamp()}`; }
-async function saveRack(list,opt){
-  if(!node) return; list=(list&&list.length)?list:rack; opt=opt||{speed:true,dist:true};
-  const q=U.saveQ in SAVE_STEP?U.saveQ:'lossless', step=SAVE_STEP[q]; toast('正在封存蠟筒架…');
-  await storeActive();
+// 把蠟筒（{T,zq,wq,used,wax,rec,group,name}）打包成 .waxrack。蠟筒架存檔與批次轉檔共用。
+// opt：quality、speed（寫入 groupOv）、dist（寫入失真設定）、meta（群組名稱 {gid:name}）、active（裝上的是第幾支）、onStep
+async function encodeRackBlob(list,{quality=U.saveQ,speed=false,dist=false,meta={},active=0,onStep}={}){
+  const q=quality in SAVE_STEP?quality:'lossless', step=SAVE_STEP[q];
   const cyls=[], blobs=[]; let raw=0;
   for(let i=0;i<list.length;i++){ const e=list[i];
     const c={T:e.T,used:e.used,wax:e.wax||'brown',rec:e.rec?{rpm:recRpm(e),set:e.rec.set}:null,group:e.group,name:e.name||null,zB:0,wB:0};
     if(e.zq){ const enc=encodeDepth(e.zq,step,-1); c.zB=enc.length; blobs.push(enc); raw+=e.zq.length*2; }
     if(e.wq){ const enc=encodeDepth(e.wq,step,1); c.wB=enc.length; blobs.push(enc); raw+=e.wq.length*2; }
-    cyls.push(c); toast(`正在壓縮第 ${i+1}/${list.length} 支…`); await new Promise(r=>setTimeout(r,0)); }
+    cyls.push(c); if(onStep) onStep(i,list.length); await new Promise(r=>setTimeout(r,0)); }
+  const groups=[...new Set(list.map(e=>e.group))];
+  const head=new TextEncoder().encode(JSON.stringify({magic:'WAXRACK',v:3,codec:'lpc2-rice',step,quality:q,N,active,cyls,
+    groupOv:speed?Object.fromEntries(groups.filter(g=>groupOv[g]).map(g=>[g,groupOv[g]])):{},
+    groupMeta:Object.fromEntries(groups.filter(g=>meta[g]).map(g=>[g,{name:meta[g]}])),
+    ...(dist?{seed:P.seed,scratchCount:P.scratchCount,defects:Object.fromEntries(DIST_KEYS.map(k=>[k,P[k]]))}:{}),waxColor:list[0]?.wax||U.waxColor}));
+  return {blob:new Blob([new Uint32Array([head.length]),head,...blobs]),raw,quality:q};
+}
+async function saveRack(list,opt){
+  if(!node) return; list=(list&&list.length)?list:rack; opt=opt||{speed:true,dist:true};
+  toast('正在封存蠟筒架…');
+  await storeActive();
+  const meta=Object.fromEntries(Object.entries(groupMeta).filter(([,m])=>m&&m.name).map(([g,m])=>[g,m.name]));
+  const {blob,raw,quality:q}=await encodeRackBlob(list,{speed:opt.speed,dist:opt.dist,meta,active:Math.max(0,list.findIndex(e=>e.id===activeId)),
+    onStep:(i,n)=>toast(`正在壓縮第 ${i+1}/${n} 支…`)});
   const act=rackEntry(activeId); if(act){ act.zq=null; act.wq=null; }   // 使用中的資料仍在音訊執行緒
-  const head=new TextEncoder().encode(JSON.stringify({magic:'WAXRACK',v:3,codec:'lpc2-rice',step,quality:q,N,active:Math.max(0,list.findIndex(e=>e.id===activeId)),cyls,groupOv:opt.speed?groupOv:{},groupMeta:Object.fromEntries([...new Set(list.map(e=>e.group))].filter(g=>groupMeta[g]&&groupMeta[g].name).map(g=>[g,{name:groupMeta[g].name}])),...(opt.dist?{seed:P.seed,scratchCount:P.scratchCount,defects:Object.fromEntries(DIST_KEYS.map(k=>[k,P[k]]))}:{}),waxColor:U.waxColor}));
-  const blob=new Blob([new Uint32Array([head.length]),head,...blobs]);
   if(!await download(blob,`${saveBaseName(list)}.waxrack`)){ toast('已取消儲存'); return; }
   toast(`已儲存 ${list.length} 支蠟筒（${(blob.size/1048576).toFixed(2)} MB，${{lossless:'無損',high:'高品質',compact:'精簡'}[q]}${raw?`，為未壓縮的 ${(blob.size/raw*100).toFixed(0)}%`:''}）`);
 }
-async function loadAny(file){
+// 解析 .waxrack（不碰蠟筒架）：回傳 {head, entries, gmap}；entries 已配好新的 id 與群組編號
+async function parseRack(file){
   const buf=await readMaybeGz(file), dv=new DataView(buf), hl=dv.getUint32(0,true);
   const head=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,hl)));
   if(head.N!==N) throw new Error('格式不符');
-  if(head.magic==='WAXCYL') return loadCylinder(file);
   if(head.magic!=='WAXRACK') throw new Error('不是蠟筒架檔');
-  if(rack.length+head.cyls.length>24+((rack.length===1&&rack[0].used===0)?1:0)){ toast(`檔案有 ${head.cyls.length} 支蠟筒，加入後會超過上限 24 支`); return; }
-  doStop(); await storeActive();
   let off=4+hl; const entries=[]; const gmap=new Map();
   for(const c of head.cyls){ const L=c.T*N, e={id:++rackSeq,T:c.T,zq:null,wq:null,used:c.used||0,wax:WAXSPEC[c.wax]?c.wax:(WAXSPEC[head.waxColor]?head.waxColor:'brown'),
       rec:c.rec?{acc:c.rec.rpm||0,n:c.rec.rpm?1:0,set:c.rec.set||{}}:null, name:c.name||undefined};
@@ -1549,6 +1589,15 @@ async function loadAny(file){
       if(c.w){ e.wq=new Int16Array(buf.slice(off,off+L*2)); off+=L*2; } }
     entries.push(e); }
   if(!entries.length) throw new Error('檔案裡沒有蠟筒');
+  return {head,entries,gmap};
+}
+const rackFull=n=>rack.length+n>24+((rack.length===1&&rack[0].used===0)?1:0);
+async function loadAny(file){
+  const peek=await readMaybeGz(file), hl=new DataView(peek).getUint32(0,true);
+  if(JSON.parse(new TextDecoder().decode(new Uint8Array(peek,4,hl))).magic==='WAXCYL') return loadCylinder(file);
+  const {head,entries,gmap}=await parseRack(new Blob([peek]));
+  if(rackFull(entries.length)){ toast(`檔案有 ${entries.length} 支蠟筒，加入後會超過上限 24 支`); return; }
+  doStop(); await storeActive();
   if(rack.length===1&&rack[0].used===0){ rack.length=0; } rack.push(...entries); activeId=-1; nextInfo=null;
   if(head.groupOv) for(const [g,o] of Object.entries(head.groupOv)){ const ng=gmap.get(+g); if(ng!=null) groupOv[ng]=o; }
   if(head.groupMeta) for(const [g,o] of Object.entries(head.groupMeta)){ const ng=gmap.get(+g); if(ng!=null) groupMeta[ng]={name:o.name}; }
@@ -1758,6 +1807,7 @@ applyVolume();
 rack[0].T=T; rack[0].wax=U.waxColor; $('mag').classList.toggle('both',U.magTab==='both'); buildPanel(); setupCrank(); setupFileConsole(); updateCylInfo(); renderRack(); renderWaxInfo(); setWaxColor(); applyPerf();
 $('bRec').onclick=()=>{ stopCarousel(); doRecord(); }; $('bPlay').onclick=()=>{ if(carousel){ stopCarousel(); doStop(); } else doPlay(); }; $('bStop').onclick=()=>{ stopCarousel(); doStop(); }; $('bHome').onclick=()=>seekTo(0);
 $('bTour').onclick=()=>{ if(carousel) stopCarousel(); else startCarousel(); };   // 關掉輪播只恢復介面，播放照常繼續
+$('bPlayer').onclick=()=>{ if(carousel) stopCarousel(); music.open(); };
 $('bHelp').onclick=()=>$('help').classList.remove('hide'); $('bHelpClose').onclick=()=>$('help').classList.add('hide');
 $('help').addEventListener('click',e=>{ if(e.target.id==='help') $('help').classList.add('hide'); });
 $('bSlow').onclick=()=>setRange('rpm',3); $('bStd').onclick=()=>setRange('rpm',160);
@@ -1779,13 +1829,12 @@ $('bLoad').onclick=()=>$('loadIn').click();
 $('loadIn').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) loadAny(f).catch(err=>toast('載入失敗：'+err.message)); };
 $('bWav').onclick=async()=>{ const o=await askExport('wav'); if(o) exportAll(null,o).catch(e=>toast('匯出失敗：'+e.message)); };
 setDockTab(U.dockTab||'rec');
+// 解碼音檔；尚未開啟留聲機時先用離線音訊環境解碼，之後播放時會自動重取樣
+function decodeAudio(data){ const dec=ctx||new OfflineAudioContext(1,1,48000); return new Promise((res,rej)=>{ const pr=dec.decodeAudioData(data,res,rej); if(pr&&pr.catch) pr.catch(rej); }); }
 async function importAudio(f){
   $('fileName').textContent=`正在解碼 ${f.name}…`;
   try{
-    const data=await f.arrayBuffer();
-    // 尚未開啟留聲機時，先用離線音訊環境解碼，之後播放時會自動重取樣
-    const dec=ctx||new OfflineAudioContext(1,1,48000);
-    fileBuffer=await new Promise((res,rej)=>{ const pr=dec.decodeAudioData(data,res,rej); if(pr&&pr.catch) pr.catch(rej); });
+    fileBuffer=await decodeAudio(await f.arrayBuffer());
     fileTitle=f.name.replace(/\.[^.]+$/,'')||f.name;
     $('fileName').textContent=`${f.name}・${fileBuffer.duration.toFixed(1)} 秒・${fileBuffer.numberOfChannels===1?'單聲道':'立體聲（錄音時混成單聲道）'}`;
     if(U.src!=='file'){ U.src='file'; $('sel_src').value='file'; updateWhen(); }
@@ -1816,11 +1865,13 @@ seekEl.addEventListener('input',()=>{ seeking=true; seekTo(seekEl.value/1000*(T*
 seekEl.addEventListener('change',()=>{ seeking=false; });
 addEventListener('keydown',e=>{ if(askExport.done){ if(e.key==='Escape') askExport.done(false); else if(e.key==='Enter'){ e.preventDefault(); askExport.done(true); } return; }
   if(e.target.tagName==='INPUT'&&e.target.type!=='range'||e.target.tagName==='SELECT') return;
+  if(e.key==='p'||e.key==='P'){ if(playerMode) music.close(); else $('bPlayer').click(); return; }
+  if(playerMode){ if(e.code==='Space'){ e.preventDefault(); $('pvPlay').click(); } else if(e.key==='m'||e.key==='M'){ U.muted=!U.muted; applyVolume(); } else if(e.key==='Escape') music.close(); return; }   // 播放器裡不錄音、不開輪播
   if(e.code==='Space'){ e.preventDefault(); $('bPlay').click(); } else if(e.key==='m'||e.key==='M'){ U.muted=!U.muted; applyVolume(); } else if(e.key==='r'||e.key==='R'){ $('bRec').click(); }
   else if(e.key==='t'||e.key==='T'){ $('bTour').click(); } else if(e.key==='Escape'){ if(carousel) stopCarousel(); else doStop(); } });
 
 $('bStart').onclick=async()=>{
-  try{ await initAudio(); $('splash').classList.add('hide'); setTimeout(()=>$('splash').remove(),700); openExternal(); }
+  try{ await initAudio(); $('splash').classList.add('hide'); setTimeout(()=>$('splash').remove(),700); openExternal(); music.ready(); if(!has3D) setTimeout(()=>toast('這台電腦無法使用 3D（WebGL），已改為無 3D 模式；聲音與剖面照常'),900); }
   catch(err){ $('splashMsg').textContent='音訊初始化失敗：'+err.message; }
 };
 // ---- 桌面版：雙擊 .waxrack／音檔交給本程式時開啟；留聲機還沒開啟就先排隊 ----
@@ -1834,6 +1885,35 @@ function openExternal(f){
   }
 }
 platform.onOpenFile?.(openExternal);
+
+// ---------------- 給音樂播放器與曲庫（src/music.js）用的介面 ----------------
+// 把一首歌（AudioBuffer）轉成 .waxrack 的 Blob；cfg：wax、rpm、normalize、quality、title
+async function convertSong(buffer,cfg,onProgress){
+  const wax=WAXSPEC[cfg.wax]?cfg.wax:'brown', rpm=Math.max(20,Math.min(240,+cfg.rpm||160));
+  const res=await burnBuffer(buffer,{gainDb:cfg.normalize?normalizeGain(buffer):0,wax,rpm,waxPreset:true,onProgress});
+  if(!res.cyls.length) throw new Error('沒有刻到任何內容（音檔可能是靜音）');
+  const set={...WAXSPEC[wax].rec,tipOn:true,volume:P.volume,drive:'motor',targetRpm:rpm};
+  const list=res.cyls.map(m=>{ const e={T:m.T,zq:null,wq:null,used:0,wax,group:1,rec:{acc:rpm,n:1,set}}; quantize(m.z,null,e); return e; });
+  return (await encodeRackBlob(list,{quality:cfg.quality||'lossless',meta:{1:cfg.title||''}})).blob;
+}
+// 把一首歌（.waxrack 位元組）放到蠟筒架最後面，自成一組；不裝上。播放中會接好下一支，所以能無縫接到這首
+async function loadSong(data,{name}={}){
+  const {entries}=await parseRack(new Blob([data]));
+  if(rackFull(entries.length)) throw new Error(`這首需要 ${entries.length} 支蠟筒，蠟筒架放不下（上限 24 支）`);
+  const gid=entries[0].group; for(const e of entries) e.group=gid;
+  groupMeta[gid]={name:name||groupMeta[gid]?.name};
+  rack.push(...entries); afterReorder(); return gid;
+}
+function playGroup(gid){ const e=rack.find(x=>x.group===gid&&x.used>0)||rack.find(x=>x.group===gid); return e?mount(e.id,{play:true}):null; }
+// 移除一組（使用中的那一支不動）
+function removeGroup(gid){ for(let i=rack.length-1;i>=0;i--) if(rack[i].group===gid&&rack[i].id!==activeId) rack.splice(i,1); if(!rack.some(e=>e.group===gid)){ delete groupMeta[gid]; delete groupOv[gid]; } afterReorder(); }
+function rackSongs(){ return groupsInOrder().map(g=>{ const mem=rack.filter(e=>e.group===g); return {gid:g,name:groupName(g),secs:mem.reduce((a,e)=>a+cylSecs(e),0),cyls:mem.length,hasContent:mem.some(e=>e.used>0)}; }); }
+function musicStatus(){ const ae=rackEntry(activeId), playing=mode==='play'; if(!ae) return {playing};
+  const mem=rack.filter(x=>x.group===ae.group), i=mem.indexOf(ae), before=mem.slice(0,i).reduce((a,e)=>a+cylSecs(e),0);
+  return {gid:ae.group,name:groupName(ae.group),pos:before+Math.min(dispS/N/((recRpm(ae)||P.rpm)/60),cylSecs(ae)),total:mem.reduce((a,e)=>a+cylSecs(e),0),playing}; }
+const music=initMusic({ platform, toast, fmtDur, hasAudio:()=>!!node, decodeAudio, convertSong, loadSong, playGroup, removeGroup, rackSongs, musicStatus,
+  stop:doStop, togglePlay:()=>$('bPlay').click(), groupName,
+  setPlayerMode:on=>{ playerMode=on; document.body.classList.toggle('player',on); if(!on) frameView(); } });
 platform.onCommand?.(c=>{ if(c==='toggle-play') $('bPlay').click(); else if(c==='stop') $('bStop').click(); });
 
 // 點擊蠟筒移動唱頭
@@ -1999,7 +2079,7 @@ function frame(now){
   if(tour) tourStep(dt);
   if(fly){ fly.k=Math.min(1,fly.k+dt*1.4); const e=fly.k<.5?2*fly.k*fly.k:1-Math.pow(-2*fly.k+2,2)/2; camera.position.lerpVectors(fly.p0,fly.p1,e); controls.target.lerpVectors(fly.t0,fly.t1,e); if(fly.k>=1) fly=null; }
   if(rays.visible){ const tt=now/1000; for(let i=0;i<MOTES;i++){ const sd=moteSeed[i]; motePos[i*3]+=Math.sin(tt*0.3+sd)*0.01; motePos[i*3+1]+=Math.cos(tt*0.23+sd*1.7)*0.008-0.002; motePos[i*3+2]+=Math.sin(tt*0.17+sd*0.7)*0.01; } moteGeo.attributes.position.needsUpdate=true; }
-  if(U.quality!=='off'&&now-lastRender>=1000/parseInt(U.fpsCap)-3){ lastRender=now; controls.update(); renderer.render(scene,camera); fpsN++; }
+  if(has3D&&!playerMode&&U.quality!=='off'&&now-lastRender>=1000/parseInt(U.fpsCap)-3){ lastRender=now; controls.update(); renderer.render(scene,camera); fpsN++; }
   if(now-fpsT>1000){ const pi=$('perfInfo'); if(pi) pi.textContent=U.quality==='off'?'3D 已關閉，聲音與剖面照常運作。':`畫面 ${fpsN} fps · 解析度 ${renderer.domElement.width}×${renderer.domElement.height} · 設定會記在這台電腦上`; fpsN=0; fpsT=now; }
   drawMag(); drawDepthWin(now);
   if(now-uiT>90){ uiT=now; updateUI(); }

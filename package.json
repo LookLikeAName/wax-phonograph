@@ -13,6 +13,7 @@
     "dist:win": "vite build && electron-builder --win --x64"
   },
   "dependencies": {
+    "music-metadata": "12.3.2",
     "three": "0.160.0"
   },
   "devDependencies": {
@@ -26,9 +27,28 @@
     "appId": "io.github.looklikeaname.waxphonograph",
     "productName": "Wax Phonograph",
     "executableName": "WaxPhonograph",
-    "directories": { "output": "release", "buildResources": "build" },
-    "files": ["dist/index.html", "electron/**", "build/icon.png", "build/tray.png", "build/tray@2x.png", "package.json"],
-    "win": { "target": ["zip", "portable"], "icon": "build/icon.png", "artifactName": "WaxPhonograph-${version}-win-${arch}.${ext}" },
-    "portable": { "artifactName": "WaxPhonograph-${version}-portable.exe" }
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/index.html",
+      "electron/**",
+      "build/icon.png",
+      "build/tray.png",
+      "build/tray@2x.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "zip",
+        "portable"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "WaxPhonograph-${version}-win-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "WaxPhonograph-${version}-portable.exe"
+    }
   }
 }
