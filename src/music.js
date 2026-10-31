@@ -207,16 +207,17 @@ export function initMusic(api) {
 
   // ---------------- 播放 ----------------
   // 取得一首歌的 .waxrack 位元組：已轉檔就讀檔，否則當場轉（有輸出資料夾時順便存起來）
-  async function bytesFor(s) {
+  // show：這首就是要馬上播的那首，才在「正在播放」顯示轉檔中（背景預載下一首時不要蓋掉目前的標題）
+  async function bytesFor(s, show = false) {
     if (s.status === 'done' && s.out) { try { return await fs.readFile(s.out); } catch {} }
-    s.status = 'busy'; renderLibRows(); setNow(s, '正在轉成蠟筒…');
+    s.status = 'busy'; renderLibRows(); if (show) setNow(s, '正在轉成蠟筒…');
     try { return await convertOne(s); } finally { if (s.status === 'busy') s.status = ws?.output.dir ? 'done' : 'todo'; renderLibRows(); }
   }
-  async function ensureLoaded(k) {
+  async function ensureLoaded(k, show = false) {
     const s = songOf(k); if (!s) return null;
     if (s.kind === 'rack') return s.gid;
     if (loaded.has(k)) return loaded.get(k);
-    const gid = await api.loadSong(await bytesFor(s), { name: s.title });
+    const gid = await api.loadSong(await bytesFor(s, show), { name: s.title });
     loaded.set(k, gid); return gid;
   }
   // 從佇列的第 i 首開始播
@@ -227,7 +228,7 @@ export function initMusic(api) {
     try {
       clearForSwitch(queue[i]);
       qi = i; nextGid = null; nextQi = -1;
-      const gid = await ensureLoaded(queue[i]); if (gid == null) return;
+      const gid = await ensureLoaded(queue[i], true); if (gid == null) return;
       curGid = gid; await api.playGroup(gid); wasPlaying = true;
       for (const g of leftovers) api.removeGroup(g);   // 換上新蠟筒後，舊的那一支才能拿掉
       leftovers.clear();

@@ -45,8 +45,7 @@ const until = async (fn, ms = 20000) => { const t = Date.now(); while (Date.now(
 
 try {
   // 1. 新增工作區（選音樂資料夾）、儲存
-  let { app, page } = await launch({ folders: [music, outDir], saveWorkspace: wsFile });
-  await click(page, '#bPlayer'); await click(page, '.pv-tabs [data-pv=lib]');
+  let { app, page } = await launch({ folders: [music, outDir], saveWorkspace: wsFile });  await click(page, '#bPlayer'); await click(page, '.pv-tabs [data-pv=lib]');
   await click(page, '#pvLibDesk [data-a=new]');
   let r = await waitRows(page, x => x.length === 2);
   check('掃描到資料夾裡的兩首（含子資料夾）', r.length === 2, JSON.stringify(r));
@@ -71,22 +70,36 @@ try {
   r = await waitRows(page, x => x.every(y => y.startsWith('已轉檔')), 10000);
   check('改回來又是「已轉檔」', r.every(x => x.startsWith('已轉檔')));
 
-  // 4. 全選 → 播放：第一首播完自動接第二首；蠟筒架上最多只放兩首
+  // 4. 改蠟材讓兩首都要當場轉檔，再全選 → 播放：第一首播完自動接第二首；蠟筒架上最多只放兩首
+  await page.evaluate(() => { const s = document.querySelector('#pvLibDesk [data-k=wax]'); s.value = 'amber'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+  await waitRows(page, x => x.every(y => y.startsWith('設定已變更')), 10000);
   await page.evaluate(() => { const a = document.getElementById('pvSelAll'); a.click(); });
+  // 在頁面裡每 100 ms 記一次狀態變化（測試失敗時印出來）
+  await page.evaluate(() => { const t0 = performance.now(); let last = ''; window.__tl = [];
+    setInterval(() => { const s = ['pvTitle', 'pvArtist', 'pvPlay', 'pvPos', 'pvTot', 'pvState'].map(id => document.getElementById(id)?.textContent.trim()).join(' ') + ' | ' + document.getElementById('rackSum')?.textContent.split('・').slice(0, 2).join('・') + ' | toast: ' + document.getElementById('toast')?.textContent;
+      if (s !== last) window.__tl.push(((performance.now() - t0) / 1000).toFixed(1) + 's ' + s); last = s; }, 100); });
   await click(page, '#pvLibDesk [data-a=playSel]');
-  const started = await until(() => page.evaluate(() => document.getElementById('pvTitle').textContent === '01 第一首' && document.getElementById('pvPlay').textContent === '■'));
+  const started = await until(() => page.evaluate(() => document.getElementById('pvTitle').textContent === '01 第一首' && (document.getElementById('pvPlay').textContent === '■' || document.getElementById('pvPos').textContent !== '0:00')), 90000);   // 要先當場轉檔
   const t1 = await page.evaluate(() => document.getElementById('pvTitle').textContent);
   check('開始播放第一首', started, t1);
-  let t2 = t1; for (let i = 0; i < 40 && t2 === t1; i++) { await sleep(500); t2 = await page.evaluate(() => document.getElementById('pvTitle').textContent); }
-  check('自動接到第二首', t2 === '02 第二首', t2);
+  // 背景預載（轉檔）下一首時，「正在播放」仍要顯示目前這首
+  await sleep(800);
+  const now1 = await page.evaluate(() => document.getElementById('pvTitle').textContent + '|' + document.getElementById('pvArtist').textContent);
+  check('預載下一首時標題不變、沒有顯示轉檔中', now1.startsWith('01 第一首|') && !now1.includes('轉成蠟筒'), now1);
+  let t2 = t1; for (let i = 0; i < 180 && t2 === t1; i++) { await sleep(500); t2 = await page.evaluate(() => document.getElementById('pvTitle').textContent); }
+  // 失敗時印出狀態變化的時間軸，方便看卡在哪裡
+  check('自動接到第二首', t2 === '02 第二首', t2 === '02 第二首' ? t2 : '\n    ' + (await page.evaluate(() => window.__tl)).slice(0, 40).join('\n    '));
   await sleep(1500);
   const groups = await page.evaluate(() => document.querySelectorAll('#rackList .grp').length);
   check('蠟筒架上只留目前與下一首（≤ 3 組，含原本的空白蠟筒）', groups <= 3, `${groups} 組`);
-  // 手動上一首／下一首來回切換：舊的歌要拿掉，不能越積越多
+  // 手動切歌（雙擊曲庫列、下一首）來回切換：舊的歌要拿掉，不能越積越多
+  // 測試音檔只有 3 秒，⏮ 在播超過 3 秒時是回到這首開頭，所以用雙擊指定第一首
   const title = () => page.evaluate(() => document.getElementById('pvTitle').textContent);
-  for (const [btn, want] of [['#pvPrev', '01 第一首'], ['#pvNext', '02 第二首'], ['#pvPrev', '01 第一首']]) {
-    await click(page, btn);
-    if (!(await until(async () => (await title()) === want && (await page.evaluate(() => document.getElementById('pvPlay').textContent)) === '■'))) { check(`切換到 ${want}`, false, await title()); break; }
+  const first = 'tr[data-k]:first-child';
+  for (const [act, want] of [[first, '01 第一首'], ['#pvNext', '02 第二首'], [first, '01 第一首']]) {
+    if (act === '#pvNext') await click(page, act);
+    else await page.evaluate(s => document.querySelector('#pvRows ' + s).dispatchEvent(new MouseEvent('dblclick', { bubbles: true })), act);
+    if (!(await until(async () => (await title()) === want && (await page.evaluate(() => document.getElementById('pvPlay').textContent === '■' || document.getElementById('pvState').textContent === ''))))) { check(`切換到 ${want}`, false, await title()); break; }
   }
   await sleep(1500);
   const after = await page.evaluate(() => [...document.querySelectorAll('#rackList .grp')].length);

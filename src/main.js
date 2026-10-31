@@ -49,7 +49,7 @@ genDefects();
 
 // ---------------- 音訊 ----------------
 let ctx=null,node=null,inputBus,master,inAn,outAn,workletURL;
-let st=null,stTime=0,dispS=0,mode='idle',hasContent=false,recMax=0,pendingSrc=false;
+let st=null,stTime=0,dispS=0,mode='idle',modeAck=true,hasContent=false,recMax=0,pendingSrc=false;
 // 蠟筒架：未裝上的蠟筒以 Int16（0.005 µm）壓縮保存在記憶體
 let rackSeq=1, groupSeq=1; const groupOv={}, groupMeta={}, rackSel=new Set(); const rack=[{id:1,T:0,zq:null,wq:null,used:0,wax:'brown',group:1}]; let activeId=1, nextInfo=null;
 let carousel=false, tour=null;
@@ -80,7 +80,7 @@ async function initAudio(){
 
 function onWorkletMsg(e){
   const m=e.data;
-  if(m.type==='st'){ st=m; stTime=performance.now(); if(m.mode==='record'){ recMax=Math.max(recMax,m.s); const e=rackEntry(activeId); if(e&&recMax>e.used){ e.used=recMax; }
+  if(m.type==='st'){ st=m; stTime=performance.now(); if(m.mode===mode) modeAck=true; if(m.mode==='record'){ recMax=Math.max(recMax,m.s); const e=rackEntry(activeId); if(e&&recMax>e.used){ e.used=recMax; }
     if(e&&m.head&&m.hg>0.9&&Math.abs(m.w)>0.005){ const ri=e.rec||(e.rec=newRecInfo()); ri.acc+=Math.abs(m.w)*60; ri.n++; } } }
   else if(m.type==='swapped'){ onSwapped(m); }
   else if(m.type==='tex'){ if(m.g0+m.d.length<=texData.length){ texData.set(m.d,m.g0); texDirty=true; depthDirty=true; } }
@@ -152,9 +152,9 @@ async function doRecord(){
   if(U.src==='mic'){ try{ await startSource(); }catch(err){ toast('無法使用麥克風：'+err.message); return; } }
   else if(U.src==='file'&&!fileBuffer){ toast('請先在「錄音台」選擇音檔'); return; }
   else pendingSrc=true;   // 等刻刀落下才開始播放音源
-  node.port.postMessage({type:'record'}); mode='record'; hasContent=true; prepareNext();
+  node.port.postMessage({type:'record'}); mode='record'; modeAck=false; hasContent=true; prepareNext();
 }
-async function doPlay(){ if(!node) return; await ctx.resume(); if(mode==='play'){ doStop(); return; } stopSources(); const ae=rackEntry(activeId); syncPlayRpm(ae);node.port.postMessage({type:'playEnd',s:ae&&ae.used>0?Math.max(ae.used,recMax):(hasContent?recMax:0)}); node.port.postMessage({type:'play'}); mode='play'; prepareNext(); }
+async function doPlay(){ if(!node) return; await ctx.resume(); if(mode==='play'){ doStop(); return; } stopSources(); const ae=rackEntry(activeId); syncPlayRpm(ae);node.port.postMessage({type:'playEnd',s:ae&&ae.used>0?Math.max(ae.used,recMax):(hasContent?recMax:0)}); node.port.postMessage({type:'play'}); mode='play'; modeAck=false; prepareNext(); }
 // 錄音與播放轉速分開後，剛錄完直接按播放也要用錄音時的轉速（這組被手動調過就沿用調過的值）
 function syncPlayRpm(e){ if(!U.applyRec||!e||!(e.used>0)) return; const ov=groupOv[e.group]; if(ov&&ov.rpm!=null) return;
   const r=recRpm(e); if(!r) return; const v=Math.max(1,Math.min(240,Math.round(r))); if(v===P.rpm) return;
@@ -2103,7 +2103,7 @@ function updateUI(){
     $('trkGrp').textContent=g; }
   if(!seeking) seekEl.value=Math.round(dispS/(T*N-1)*1000);
   $('bRec').classList.toggle('on',m==='record'); $('bPlay').classList.toggle('on',m==='play');
-  if(m==='idle'&&mode!=='idle'&&st&&!st.head) mode=m;
+  if(m==='idle'&&mode!=='idle'&&modeAck&&st&&!st.head) mode=m;   // 剛送出錄音／播放、worklet 還沒回報新模式前，舊的 idle 狀態不算（主執行緒忙時會先跑到這裡）
   if(st){
     const rpm=st.w*60; $('magRo').textContent=`${rpm.toFixed(1)} rpm · 線速 ${(st.w*CIRC/1000).toFixed(0)} mm/s · `+(st.mode==='record'?`刻深 ${st.c.toFixed(1)} µm`:`針位 ${st.p.toFixed(1)} µm`)+` · 垂直×${U.exag}`;
     const mb=$('meterBar'); if(mb) mb.style.width=Math.min(100,st.lvl*100)+'%';
