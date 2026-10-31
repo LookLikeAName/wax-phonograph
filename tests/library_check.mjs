@@ -82,6 +82,15 @@ try {
   await sleep(1500);
   const groups = await page.evaluate(() => document.querySelectorAll('#rackList .grp').length);
   check('蠟筒架上只留目前與下一首（≤ 3 組，含原本的空白蠟筒）', groups <= 3, `${groups} 組`);
+  // 手動上一首／下一首來回切換：舊的歌要拿掉，不能越積越多
+  const title = () => page.evaluate(() => document.getElementById('pvTitle').textContent);
+  for (const [btn, want] of [['#pvPrev', '01 第一首'], ['#pvNext', '02 第二首'], ['#pvPrev', '01 第一首']]) {
+    await click(page, btn);
+    if (!(await until(async () => (await title()) === want && (await page.evaluate(() => document.getElementById('pvPlay').textContent)) === '■'))) { check(`切換到 ${want}`, false, await title()); break; }
+  }
+  await sleep(1500);
+  const after = await page.evaluate(() => [...document.querySelectorAll('#rackList .grp')].length);
+  check('來回切歌後蠟筒架仍 ≤ 3 組', after <= 3, `${after} 組`);
   await page.keyboard.press('p'); await sleep(300);
   check('按 P 回到留聲機', !(await page.evaluate(() => document.body.classList.contains('player'))));
   await app.evaluate(({ app }) => app.quit()).catch(() => {}); await app.close().catch(() => {});

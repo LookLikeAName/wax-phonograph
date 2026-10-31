@@ -30,6 +30,7 @@ export function initMusic(api) {
   let queue = [], qi = -1;                 // 佇列是 song key 的陣列
   let curGid = null, nextGid = null, nextQi = -1;
   const loaded = new Map();                // 桌面版：key → 已放上蠟筒架的群組（暫時的）
+  const leftovers = new Set();             // 換歌時拿掉、但使用中那一支還留在架上的群組
   let busyLoading = false, wasPlaying = false;
   const songOf = k => byKey.get(k);
 
@@ -224,11 +225,12 @@ export function initMusic(api) {
     if (i < 0 || i >= queue.length || busyLoading) return;
     busyLoading = true;
     try {
-      // 換歌：先把之前預載的「下一首」拿掉，避免接錯
-      dropLoaded(k => k !== queue[i]);
+      clearForSwitch(queue[i]);
       qi = i; nextGid = null; nextQi = -1;
       const gid = await ensureLoaded(queue[i]); if (gid == null) return;
       curGid = gid; await api.playGroup(gid); wasPlaying = true;
+      for (const g of leftovers) api.removeGroup(g);   // 換上新蠟筒後，舊的那一支才能拿掉
+      leftovers.clear();
       setNow(songOf(queue[i]));
       await preloadNext();
     } catch (e) { api.toast('無法播放：' + e.message); }
@@ -252,9 +254,14 @@ export function initMusic(api) {
       } else nextGid = await ensureLoaded(queue[nextQi]);
     } catch (e) { api.toast('下一首準備失敗：' + e.message); nextGid = null; }
   }
-  // 移除暫時放上蠟筒架、但已經不需要的歌
-  function dropLoaded(keepFn) {
-    for (const [k, gid] of [...loaded]) if (gid !== curGid && gid !== nextGid && (!keepFn || keepFn(k))) { api.removeGroup(gid); loaded.delete(k); }
+  // 換歌：先停下，把除了要播的那首以外的暫時歌曲（包含正在播或剛播完的這首、預載的下一首）
+  // 都從蠟筒架拿掉，讓出空間給新的一首；使用中那一支要等換上新蠟筒後才拿得掉，先記在 leftovers
+  function clearForSwitch(keepK) {
+    const keep = loaded.get(keepK), stale = new Set();
+    for (const [k, gid] of [...loaded]) if (gid !== keep) { loaded.delete(k); stale.add(gid); }
+    if (nextGid != null && nextGid !== keep && songOf(queue[nextQi])?.kind !== 'rack') stale.add(nextGid);   // 重複播放時預載的那份不在 loaded 裡
+    if (curGid != null && curGid !== keep && stale.has(curGid)) api.stop();
+    for (const g of stale) { api.removeGroup(g); leftovers.add(g); }
   }
   async function next() { const j = nextIndex(qi); if (j >= 0) await playAt(j); else if (queue.length) await playAt(0); }
   async function prev() {
