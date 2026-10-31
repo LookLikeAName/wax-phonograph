@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron": "vite build && electron .",
-    "dist:win": "vite build && electron-builder --win --x64"
+    "dist:win": "vite build && node tools/copy_web.mjs && electron-builder --win --x64"
   },
   "dependencies": {
     "music-metadata": "12.3.2",
