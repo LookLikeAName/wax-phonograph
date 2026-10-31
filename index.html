@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>蠟筒留聲機</title>
+<meta name="description" content="以 3D 接觸物理模擬蠟筒留聲機的類比刻錄與播放">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Noto+Serif+TC:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="brand"><div class="fr">Le Phonographe à Cylindre</div><div class="tc">蠟筒留聲機 · 類比刻錄物理模擬</div></div>
+
+<div id="transport">
+  <button class="tb rec" id="bRec" title="錄音（R）">●</button>
+  <button class="tb" id="bPlay" title="播放／停止（空白鍵）">▶</button>
+  <button class="tb" id="bStop" title="停止">■</button>
+  <button class="tb" id="bHome" title="唱頭歸位">⏮</button>
+  <button class="tb" id="bTour" title="輪播模式（T）：循環播放架上所有蠟筒，畫面自動運鏡；再按一次、■ 或 Esc 結束"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a8 8 0 0 1 14-4.5M20 13a8 8 0 0 1-14 4.5"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></button>
+  <div id="trkInfo"><div id="trkName"><b id="trkG"></b> · <span id="trkC"></span></div><div id="trkGrp"></div></div>
+  <div id="clock">00:00.0 / 01:00.0<small>第 0 圈 · 靜止</small></div>
+  <input type="range" id="seek" min="0" max="1000" value="0" title="移動唱頭">
+  <div class="volbox" title="播放音量（只影響喇叭輸出，不影響刻痕與錄音）"><button id="bMute" class="mute" aria-label="靜音">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path id="volWaves" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></button>
+    <input type="range" id="vol" min="0" max="100" step="1" value="70"><span id="volV">70%</span></div>
+  <button class="tb" id="bHelp" title="原理說明">?</button>
+</div>
+
+<div id="tourCap"><b></b><p></p></div>
+<aside id="panel"></aside>
+<button class="tb" id="panelToggle" title="控制面板">☰</button>
+
+<section id="recDock"><div class="dhead"><span class="dtabs"><button data-dt="rec" class="on">錄音台</button><button data-dt="rack">蠟筒架與檔案</button><button data-dt="mag" id="dtMag">剖面</button></span><span class="sp"></span><span class="dmeter"><i id="dockMeter"></i></span><button class="btn" id="dockToggle">收合 ▾</button></div>
+  <div id="dockBody"><div class="dpane on" id="paneRec"><div class="dcol" id="dockA"></div><div class="dcol" id="dockB"></div><div class="dcol" id="dockC"></div></div>
+    <div class="dpane" id="paneRack"><div class="dcol" id="rackL"></div><div id="rackRF"><div class="dcol" id="rackR"></div><div class="dcol" id="rackF"></div></div></div>
+    <div class="dpane" id="paneMag"></div></div></section>
+<section id="mag">
+  <div id="magHead"><span class="tabs"><button data-tab="both" class="on">全部</button><button data-tab="groove">溝槽剖面</button><button data-tab="repro">唱頭剖面</button></span><span class="ro" id="magRo"></span></div>
+  <canvas id="magCanvas"></canvas>
+</section>
+
+<section id="depthWin" class="hide"><div class="dwHead" id="dwHead"><span>深度圖 · Height map</span><span class="ro" id="dwInfo"></span><button class="dwX" id="dwClose" title="關閉">✕</button></div>
+  <canvas id="dwCanvas"></canvas>
+  <div class="dwFoot"><span class="cbar"></span><span class="ro" id="dwScale"></span><span class="ro" id="dwHover">滾輪縮放 · 拖曳平移 · 雙擊重置 · Shift＋點擊移動唱頭</span></div>
+  <div class="dwFoot"><button class="nudge dwb" id="dwOut" title="縮小">−</button><span class="ro" id="dwZoom">×1.0</span><button class="nudge dwb" id="dwIn" title="放大">+</button><button class="btn dwr" id="dwReset">全圖</button>
+    <label class="ro dwl"><span class="sw"><input type="checkbox" id="dwAuto" checked><span></span></span>自動色階</label>
+    <label class="ro dwl"><span class="sw"><input type="checkbox" id="dwFollow"><span></span></span>追蹤唱頭</label><span class="ro" id="dwRange" style="flex:1;text-align:right"></span></div>
+  <div class="dwGrip" id="dwGrip" title="拖曳調整大小"></div></section>
+<button id="backBtn" class="btn">↩ 回到留聲機</button>
+<div id="shelfPager"><button class="btn" id="spPrev">◀ 上一排</button><span id="spInfo"></span><button class="btn" id="spNext">下一排 ▶</button></div>
+<div id="toast"></div>
+
+<div id="expDlg" class="modal hide"><div class="card xcard">
+  <h2 id="xTitle">匯出</h2>
+  <label class="xrow"><span class="sw"><input type="checkbox" id="xSpeed"><span></span></span><div><b>包含播放轉速的調整</b><div class="hint" id="xSpeedHint"></div></div></label>
+  <label class="xrow"><span class="sw"><input type="checkbox" id="xDist"><span></span></span><div><b>包含失真</b><div class="hint" id="xDistHint"></div></div></label>
+  <div class="btns" style="margin-top:14px"><button class="btn" id="xCancel">取消</button><button class="btn" id="xOk">確認</button></div>
+</div></div>
+<div id="help" class="modal hide"><div class="card">
+  <div class="fr">Comment ça marche</div>
+  <h1>原理</h1>
+  <h2>刻錄：聲音變成深淺</h2>
+  <p>蠟筒用的是垂直刻紋（hill-and-dale）。聲音經過喇叭與振膜推動刻刀上下運動，刻刀在轉動的蠟筒上切出一條螺旋溝，聲音越大，溝的深淺起伏越大。刻痕存在「角度 × 圈數」的空間座標上（每圈 18,000 格，每格約 9.7 µm），所以轉速會直接改變刻痕的疏密：慢速錄、快速放，音高就變高。</p>
+  <h2>播放：球體與表面的接觸</h2>
+  <p>唱針是一顆有半徑的球。每個音訊樣本都對針尖附近的刻痕做一次灰階膨脹運算，找出球體真正碰到的最高點，這就是碰撞。球比凹谷寬時進不去，高頻因此被抹平。唱針靠重量往下追溝底，向下加速度有上限；表面下墜得太快時唱針就離面飛起，落下時發出喀聲並在蠟上留下凹痕。</p>
+  <h2>失真與老化</h2>
+  <ul>
+    <li><b>磨損</b>：唱針壓在凸峰上，每次播放都把峰頂磨低一點。</li>
+    <li><b>切穿回音</b>：刻得太深時溝槽變寬，超過圈距就會切穿溝壁，聽到前一圈或後一圈傳來的回音。</li>
+    <li><b>偏心、flutter</b>：線速度週期性變化，音高跟著搖擺。</li>
+    <li><b>灰塵、刮痕、裂紋、霉斑</b>：直接改變表面高度，由同一套接觸運算轉成聲音。</li>
+  </ul>
+  <h2>操作</h2>
+  <p>R 錄音、空白鍵播放／停止、M 靜音、T 輪播模式（只留上方播放列，循環播放架上所有有錄音的蠟筒，鏡頭自動巡覽留聲機各部件；Esc 結束）。所有拉桿都能把滑鼠移上去捲動滾輪逐格微調（按住 Shift 一次 10 格），面板上的拉桿旁也有 −／+ 按鈕，按住可連續調整；雙擊拉桿恢復該項預設，每一區底部的「恢復本區預設」則重設整區。上方喇叭圖示旁的滑桿是數位播放音量，只改變喇叭的大小聲，不會改變刻痕深度或錄音能量。點擊 3D 蠟筒可移動唱頭；拖曳旋轉視角、滾輪縮放，靠近一點可以看到刻痕。想看清刻刀與唱針的動作，可以把轉速調到「顯微慢速」。</p>
+  <p>手搖模式下，可以在曲柄圓盤上畫圈或捲動滑鼠滾輪；齒輪比越小越好控制，開啟限速器後最快只會到目標轉速。放大剖面的「唱頭剖面」分頁畫出球針、槓桿、連桿、振膜到喇叭喉管的傳動：一般轉速下是每 4 秒擷取 21 ms 真實波形、放慢約 190 倍播放；在顯微慢速下則是即時位移。</p>
+  <h2>蠟筒架</h2>
+  <p>錄音超過一支蠟筒的長度時會自動換上新蠟筒繼續刻，播放時也會自動接續下一支有內容的蠟筒。換筒在音訊執行緒內以單一樣本完成，不會漏音。蠟筒架只存在這個分頁的記憶體裡，要長期保存請用「儲存蠟筒」逐支存檔，或匯出整個蠟筒架的 WAV。</p>
+  <div class="orn">◆ ◆ ◆</div>
+  <div style="text-align:center"><button class="btn big" id="bHelpClose">回到留聲機</button></div>
+</div></div>
+
+<div id="splash"><div class="card" style="text-align:center">
+  <div class="fr">Le Phonographe à Cylindre</div>
+  <h1>蠟筒留聲機</h1>
+  <p>聲音推動刻刀，在旋轉的蠟筒上切出深淺起伏的螺旋溝；播放時，一顆有半徑的球形唱針沿著溝底滾過，每個音訊樣本都計算一次接觸、離面與磨損，再經振膜與喇叭還原成聲音。</p>
+  <div class="orn">◆ ◆ ◆</div>
+  <button class="btn big" id="bStart">開啟留聲機</button>
+  <p class="small" id="splashMsg"></p>
+</div></div>
+
+<!-- ============================================================
+     AudioWorklet：空間域刻痕高度場與接觸物理（音訊執行緒）
+     ============================================================ -->
+
+<!-- ============================================================
+     主執行緒：3D 場景、介面、音源、剖面視窗、存檔
+     ============================================================ -->
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

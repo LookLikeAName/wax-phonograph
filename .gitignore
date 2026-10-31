@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.wrangler/
+*.log
+# 舊的離線版產物（改由 npm run build 產生 dist/index.html）
+index.offline.html
+.claude/settings.local.json
