@@ -3,6 +3,9 @@ dist/
 release/
 .wrangler/
 *.log
+__pycache__/
 # 舊的離線版產物（改由 npm run build 產生 dist/index.html）
 index.offline.html
-.claude/settings.local.json
+# 開發用的本機檔案（不進版控）
+.claude/
+CLAUDE.md

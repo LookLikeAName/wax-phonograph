@@ -28,16 +28,7 @@
     "executableName": "WaxPhonograph",
     "directories": { "output": "release", "buildResources": "build" },
     "files": ["dist/index.html", "electron/**", "build/icon.png", "build/tray.png", "build/tray@2x.png", "package.json"],
-    "fileAssociations": [
-      { "ext": "waxrack", "name": "WaxRack", "description": "蠟筒留聲機 蠟筒架檔案", "role": "Editor" }
-    ],
-    "win": { "target": ["nsis"], "icon": "build/icon.png" },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "shortcutName": "蠟筒留聲機",
-      "uninstallDisplayName": "蠟筒留聲機"
-    }
+    "win": { "target": ["zip", "portable"], "icon": "build/icon.png", "artifactName": "WaxPhonograph-${version}-win-${arch}.${ext}" },
+    "portable": { "artifactName": "WaxPhonograph-${version}-portable.exe" }
   }
 }
