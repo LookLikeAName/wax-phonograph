@@ -20,7 +20,7 @@ const P={inGain:20,baseDepth:22,monitor:false,drive:'motor',rpm:160,
   rDrive:'motor',rRpm:160,rRatio:2,rCrankGov:true,rHorn:true,rFlutter:false,rFlutterAmt:0.4,ratio:2,crankGov:true,autoLift:true,overdub:'carve',waxWear:4,waxGrain:0.6,waxCutLP:8000,pitch:254,tipOn:true,stylusR:150,mistrack:true,trackAccel:2500,
   horn:true,volume:0.7,wearOn:false,wearRate:0.05,crosstalk:true,cutterR:160,ecc:true,eccMm:0.25,flutter:true,flutterAmt:0.4,
   dust:true,dustPct:0.15,scratch:true,scratchCount:3,crack:true,mold:true,moldAmt:1.5,scratches:[],crackA0:0,crackSlope:0,seed:7};
-const U={dockTab:'rec',pmTab:'play',xSpeed:true,xDist:true,saveQ:'lossless',applyRec:true,showDepth:false,wheelDeg:15,chainRec:true,chainPlay:true,magTab:'both',masterVol:70,muted:false,src:'file',toneFreq:440,waxColor:'brown',duration:60,exag:4,showMag:true,
+const U={dockTab:'rec',pmTab:'play',xSpeed:true,xDist:true,saveQ:'lossless',applyRec:true,showDepth:false,wheelDeg:15,chainRec:true,chainPlay:true,magTab:'both',masterVol:70,muted:false,src:'file',micDev:'',micName:'',toneFreq:440,waxColor:'brown',duration:60,exag:4,showMag:true,
   quality:'med',room:true,shadows:true,sunShadow:false,rays:false,particles:true,res:'0.75',fpsCap:'60'};
 const DEF_P=JSON.parse(JSON.stringify(P)), DEF_U=JSON.parse(JSON.stringify(U));
 const PRESETS={high:{room:true,shadows:true,sunShadow:true,rays:true,particles:true,res:'1',fpsCap:'60'},
@@ -115,11 +115,38 @@ function scheduleMelody(t0){
   }
 }
 
+// 麥克風：用「輸入裝置」選的那一支（U.micDev，空字串是系統預設）；選的裝置不在了就改用系統預設
+async function openMic(){
+  const base={echoCancellation:false,noiseSuppression:false,autoGainControl:false};
+  let s;
+  if(U.micDev){
+    try{ s=await navigator.mediaDevices.getUserMedia({audio:{...base,deviceId:{exact:U.micDev}}}); }
+    catch(err){ if(err.name!=='OverconstrainedError'&&err.name!=='NotFoundError') throw err; toast('找不到選擇的輸入裝置，改用系統預設'); }
+  }
+  if(!s) s=await navigator.mediaDevices.getUserMedia({audio:base});
+  refreshMics();   // 取得權限後才看得到裝置名稱
+  return s;
+}
+function closeMic(){ if(micNode){ try{ micNode.disconnect(); }catch(e){} micNode=null; } if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; } }
+// 重新列出輸入裝置（「default」就是系統預設，不重複列）
+async function refreshMics(){
+  const sel=$('sel_micDev'); if(!sel||!navigator.mediaDevices?.enumerateDevices) return;
+  let all=[]; try{ all=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'); }catch(e){}
+  const devs=all.filter(d=>d.deviceId&&d.deviceId!=='default'), locked=all.some(d=>!d.deviceId);   // 還沒給麥克風權限時，瀏覽器不提供裝置 ID 和名稱
+  // file:// 下（含桌面版）裝置 ID 每次開啟都會變，找不到 ID 時改用名稱對回上次選的裝置
+  if(U.micDev&&!devs.some(d=>d.deviceId===U.micDev)){ const d=U.micName&&devs.find(d=>d.label===U.micName); if(d){ U.micDev=d.deviceId; rememberSetting('micDev'); } }
+  const opts=[['','系統預設'],...devs.map((d,i)=>[d.deviceId,d.label||`輸入裝置 ${i+1}`])];
+  if(U.micDev&&!devs.some(d=>d.deviceId===U.micDev)) opts.push([U.micDev,locked?'上次選的裝置（開始錄音後會列出所有裝置）':'（上次選的裝置，目前沒有連接）']);
+  sel.replaceChildren(...opts.map(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; return o; }));
+  sel.value=U.micDev;
+}
+navigator.mediaDevices?.addEventListener?.('devicechange',()=>refreshMics());
+
 async function startSource(){
   const t0=ctx.currentTime+0.01;
   switch(U.src){
     case 'mic': {
-      if(!micStream) micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+      if(!micStream) micStream=await openMic();
       if(!micNode) micNode=ctx.createMediaStreamSource(micStream);
       micNode.connect(inputBus); liveSrc.push({disconnect:()=>micNode.disconnect()}); break; }
     case 'file': {
@@ -171,6 +198,7 @@ const SPEC=[
  {title:'錄音 · Recording',open:true,rec:true,items:[
   {t:'select',k:'src',u:1,dock:'a',label:'音源',opts:[['file','匯入音檔'],['mic','麥克風'],['melody','旋律：瑪莉有隻小綿羊（愛迪生的第一段錄音）'],['tone','正弦波'],['sweep','掃頻 40 Hz → 6 kHz'],['noise','白噪音']]},
   {t:'html',dock:'a',when:['src','file'],html:`<div class="btns"><label class="btn">選擇音檔…<input type="file" id="fileIn" accept="audio/*,.mp3,.wav,.ogg,.oga,.m4a,.aac,.flac,.opus,.webm" hidden></label></div><div class="hint keep" id="fileName">尚未選擇音檔（支援 MP3、WAV、OGG、M4A、FLAC，也可以直接把檔案拖進視窗）</div>`},
+  {t:'select',k:'micDev',u:1,dock:'a',when:['src','mic'],label:'輸入裝置',opts:[['','系統預設']]},   // 選項由 refreshMics() 填入
   {t:'range',k:'toneFreq',u:1,dock:'a',when:['src','tone'],label:'頻率',min:40,max:5000,step:1,unit:'Hz'},
   {t:'html',dock:'b',when:['src','file'],html:`<div id="fcon" class="fcon" style="display:none">
      <div class="fl"><div class="fhead"><span id="fPos">00:00.00</span><span id="fMeta"></span></div>
@@ -356,14 +384,14 @@ function buildPanel(){
     }
     panel.appendChild(det);
   }
-  updateWhen(); placeRec();
+  updateWhen(); placeRec(); refreshMics();
   document.querySelectorAll('a.relLink').forEach(a=>a.href=RELEASES_URL);   // 開場、說明、關於裡的下載連結
 }
 function updateWhen(){ document.querySelectorAll('[data-when]').forEach(el=>{ const [ks,v]=el.dataset.when.split(':');   // k 可用 | 列出多個，任一個符合就顯示
     const ok=ks.split('|').some(k=>{ const cur=U[k]??P[k]; return v.startsWith('!')?cur!==v.slice(1):cur===v; }); el.style.display=ok?'':'none'; });
   const fe=$('fconEmpty'); if(fe) fe.style.display=fileBuffer?'none':''; const rn=$('recSrcName'); if(rn){ const o=document.querySelector('#sel_src option:checked'); rn.textContent=o?o.textContent.split('：')[0]:''; } }
 // ---- 恢復預設 ----
-const RESET_SKIP=new Set(['src','waxColor','drive','rDrive','magTab','quality','res','fpsCap','overdub','toneFreq']);   // 選擇類設定不重設
+const RESET_SKIP=new Set(['src','micDev','waxColor','drive','rDrive','magTab','quality','res','fpsCap','overdub','toneFreq']);   // 選擇類設定不重設
 const WAX_REC_KEYS=new Set(['cutterR','baseDepth','inGain','stylusR']);   // 依目前蠟材的建議值
 function sectionResetKeys(sec,m){ const ks=[]; for(const it of sec.items){ if(m&&it.m&&it.m!==m) continue; if((it.t==='range'||it.t==='check')&&it.k&&!RESET_SKIP.has(it.k)) ks.push(it.k); if(it.tog) ks.push(it.tog); } return ks; }
 function defaultOf(k){ if(WAX_REC_KEYS.has(k)&&typeof WAXSPEC!=='undefined'){ const r=WAXSPEC[U.waxColor].rec; if(r&&k in r) return r[k]; } return k in DEF_P?DEF_P[k]:DEF_U[k]; }
@@ -384,7 +412,8 @@ function onChange(k){
   if(SETTING_KEYS.has(k)&&!applyingRec) rememberSetting(k);   // 裝上蠟筒、換蠟材時自動套用的值不記
   if(OV_KEYS.has(k)&&!applyingRec&&U.applyRec){ const e=rackEntry(activeId); if(e){ (groupOv[e.group]||(groupOv[e.group]={}))[k]=P[k]; if(k==='rpm') renderRack(); } }
   switch(k){
-    case 'src': case 'drive': case 'rDrive': updateWhen(); break;
+    case 'src': case 'drive': case 'rDrive': updateWhen(); if(k==='src'&&U.src==='mic') refreshMics(); break;
+    case 'micDev': U.micName=U.micDev?($('sel_micDev').selectedOptions[0]?.textContent||''):''; rememberSetting('micName'); closeMic(); if(mode==='record'&&U.src==='mic') startSource().catch(err=>toast('無法使用麥克風：'+err.message)); break;   // 錄音中換裝置就直接接上新的
     case 'toneFreq': if(toneOsc) toneOsc.frequency.setTargetAtTime(U.toneFreq,ctx.currentTime,0.01); break;
     case 'waxColor': {
       const k=U.waxColor, ae=rackEntry(activeId), prev=(ae&&ae.wax)||'brown'; if(k===prev) break;
